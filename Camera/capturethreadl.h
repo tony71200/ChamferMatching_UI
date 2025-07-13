@@ -102,6 +102,9 @@ public:
     ImageProcSettingDialog * imageprocSettingDialog;
     void SetCameraModel(_CAMERA_SDK_ cam_model);
     bool using_default_parameter = false;
+    bool frame_in_process = false;
+    void setPathFolderSave(const QString& path) {m_path_folder_save = path;}    // Tony  250710
+    
 #ifdef SPINNAKER_CAM_API
     void SetSpinnakerPtr(SpinnakerCamera *spin_cam);
 #endif
@@ -131,11 +134,15 @@ signals:
 
     void frameReady(const QImage &img);
 public slots:
-    void CaptureReady();	// Jang 20220408
+    void CaptureReady();    // Jang 20220408
+    void saveCurrentFrame(); // Tony_250708: slot để UI gọi lưu hình
 private:
     bool m_running = false;
     Pylon::CInstantCamera m_camera;
     QImage convertToQimage(const Pylon::CPylonImage &pylonImg);
+    void CaptureAndSaveImage(const QImage& img); // Tony_250708
+    QImage m_lastFrame; // [OPTIMIZED] Lưu frame cuối cùng để UI có thể lưu khi cần
+    QString m_path_folder_save;
 };
 
 #endif // CAPTURETHREADL_H

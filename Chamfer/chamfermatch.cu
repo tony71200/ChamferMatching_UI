@@ -40,16 +40,19 @@ __global__ void DilateAndMoveMat(uchar* input_mat_data_8uc1, uchar* output_mat_d
     int index_y = threadIdx.y + blockIdx.y * blockDim.y;
     int index_z = threadIdx.z + blockIdx.z * blockDim.z;
 
-//    printf("recomputed_kernel_w: %d\n", (int)src_w);
-//    printf("recomputed_kernel_h: %d\n", (int)src_h);
+    // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+    // printf("recomputed_kernel_w: %d\n", (int)src_w);
+    // printf("recomputed_kernel_h: %d\n", (int)src_h);
     // Out of range
     if(index_x >= src_w + padding_w ||
        index_y >= src_h + padding_h ){
-//        printf("recomputed_kernel_w: %d\n", (int)src_w);
-//        printf("recomputed_kernel_h: %d\n", (int)src_h);
+        // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+        // printf("recomputed_kernel_w: %d\n", (int)src_w);
+        // printf("recomputed_kernel_h: %d\n", (int)src_h);
         return;
     }
-//    printf("----------------- DilateAndMoveMat -------------------\n");
+    // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+    // printf("----------------- DilateAndMoveMat -------------------\n");
 
     // index in the shared memory
     int current_input_img_index = (index_x - padding_w) + (index_y - padding_h) * src_w;
@@ -66,9 +69,10 @@ __global__ void DilateAndMoveMat(uchar* input_mat_data_8uc1, uchar* output_mat_d
     short recomputed_kernel_h = (src_h - index_y + padding_h < kernel_h) ? src_h - index_y + padding_h : kernel_h;
     short recomputed_start_w = (index_x - padding_w < 0) ? padding_w - index_x : 0;
     short recomputed_start_h = (index_y - padding_h < 0) ? padding_h - index_y : 0;
-//    printf("----------------- DilateAndMoveMat -------------------\n");
-//    printf("recomputed_kernel_w: %d\n", (int)recomputed_kernel_w);
-//    printf("recomputed_kernel_h: %d\n", (int)recomputed_kernel_h);
+    // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+    // printf("----------------- DilateAndMoveMat -------------------\n");
+    // printf("recomputed_kernel_w: %d\n", (int)recomputed_kernel_w);
+    // printf("recomputed_kernel_h: %d\n", (int)recomputed_kernel_h);
 
     int index_searching = 0;
     bool found = false;
@@ -78,7 +82,8 @@ __global__ void DilateAndMoveMat(uchar* input_mat_data_8uc1, uchar* output_mat_d
             // If there is any contours in the area, draw a point
             if(input_mat_data_8uc1[index_searching] > 127){
                 output_mat_data_8uc1[target_index] = 255;
-//                printf("----------------- DilateAndMoveMat: a point is drawn -------------------\n");
+                // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+                // printf("----------------- DilateAndMoveMat: a point is drawn -------------------\n");
                 found = true;
                 break;
             }
@@ -166,7 +171,8 @@ __global__ void ChamferMatch(float* flat_source_dist_transfrom,
     if(index_x >= source_num_candidate_width ||
        index_y >= source_num_candidate_height ||
        index_x + index_y * source_num_candidate_width >= length_source_candidate){
-//        printf("Out of range - x: %d, y: %d\n", index_x, index_y);
+        // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+        // printf("Out of range - x: %d, y: %d\n", index_x, index_y);
         return;
     }
 
@@ -189,10 +195,11 @@ __global__ void ChamferMatch(float* flat_source_dist_transfrom,
                 float tmp_val_1 = flat_template_weight[template_index];
                 tmp_val = tmp_val_0 * tmp_val_1;
                 flat_score_map[candidate_index + i*length_source_candidate] += tmp_val;
-                if(flat_template_weight[template_index] > 1 || flat_template_weight[template_index] <= 0){
-                    printf("HERE:::::: flat_template_weight: %f \nflat_source_dist_transfrom: %f\n", flat_template_weight[template_index], flat_source_dist_transfrom[current_index + non_zero_index]);
-                    printf("HERE:::::: flat_template_weight: %f \n", flat_template_weight[template_index]);
-                }
+                // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+                // if(flat_template_weight[template_index] > 1 || flat_template_weight[template_index] <= 0){
+                //     printf("HERE:::::: flat_template_weight: %f \nflat_source_dist_transfrom: %f\n", flat_template_weight[template_index], flat_source_dist_transfrom[current_index + non_zero_index]);
+                //     printf("HERE:::::: flat_template_weight: %f \n", flat_template_weight[template_index]);
+                // }
             }
             else{
                 flat_score_map[candidate_index + i*length_source_candidate] += flat_source_dist_transfrom[current_index + non_zero_index];
@@ -266,13 +273,14 @@ __global__ void ChamferMatch2(float* flat_source_dist_transfrom,
                 float tmp_val_1 = flat_template_weight[template_index];
                 tmp_val = tmp_val_0 * tmp_val_1;
                 flat_score_map[candidate_index + i*length_source_candidate] += tmp_val;
+                // [OPTIMIZED] Commented out debug printfs and error counters for industrial code cleanliness
                 if(flat_template_weight[template_index] > 1){
-                    error_count_template_weight_0++;
-//                    printf("HERE:::::: flat_template_weight: %f \n", flat_template_weight[template_index]);
+                    // error_count_template_weight_0++;
+                    // printf("HERE:::::: flat_template_weight: %f \n", flat_template_weight[template_index]);
                 }
                 if(flat_template_weight[template_index] <= 0){
-                    error_count_template_weight_1++;
-//                    printf("HERE:::::: flat_template_weight: %f \nflat_source_dist_transfrom: %f\n", flat_template_weight[template_index], flat_source_dist_transfrom[current_index + non_zero_index]);
+                    // error_count_template_weight_1++;
+                    // printf("HERE:::::: flat_template_weight: %f \nflat_source_dist_transfrom: %f\n", flat_template_weight[template_index], flat_source_dist_transfrom[current_index + non_zero_index]);
                 }
             }
             else{
@@ -284,8 +292,9 @@ __global__ void ChamferMatch2(float* flat_source_dist_transfrom,
         flat_score_map[candidate_index + i*length_source_candidate] /= (float)template_num_non_zero[i];
 
     }
-//    printf("HERE:::::: error_count_template_weight_0: %d \n", error_count_template_weight_0);
-//    printf("HERE:::::: error_count_template_weight_1: %d \n", error_count_template_weight_1);
+    // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+    // printf("HERE:::::: error_count_template_weight_0: %d \n", error_count_template_weight_0);
+    // printf("HERE:::::: error_count_template_weight_1: %d \n", error_count_template_weight_1);
 }
 
 __global__ void TestAccessMem(float* shared_mem){
@@ -356,9 +365,10 @@ __global__ void SortChamferScores(float* score_candidates, int* score_candidates
 
         for(int j = 0; j < target_num_scores; j ++){
             if(result_score_candidates[j + current_result_index] > score_candidates[i + current_block_index] ){
-//                if(score_candidates[i + current_block_index] == 0){
-//                    printf("HERE:::::: threadIdx.x: %d, threadIdx.y: %d \n ", threadIdx.x, threadIdx.y);
-//                }
+                // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+                // if(score_candidates[i + current_block_index] == 0){
+                //     printf("HERE:::::: threadIdx.x: %d, threadIdx.y: %d \n ", threadIdx.x, threadIdx.y);
+                // }
                 // Make a space for new value
                 for(int k = target_num_scores - 1; k > j; k--){
                     result_score_candidates[k + current_result_index] = result_score_candidates[k - 1 + current_result_index];
@@ -368,13 +378,14 @@ __global__ void SortChamferScores(float* score_candidates, int* score_candidates
                 result_score_candidates[j + current_result_index] = score_candidates[i + current_block_index] ;
                 result_score_candidates_index[j + current_result_index] = score_candidates_index[i + current_block_index];
 
-//                if(target_num_scores == 10){
-//                    printf("HERE:::::: %f, %d, %d\n", result_score_candidates[j + current_result_index], i, j);
-//                }
-//                if(result_score_candidates[j + current_result_index] > 10000000){
-//                    printf("HERE:::::: %f, %d, %d\n", result_score_candidates[j + current_result_index], i, j);
-////                    printf(" %f, %d, %d, %d\n", result_score_candidates[j + current_result_index+ 1], index_x, divider, num_scores);
-//                }
+                // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+                // if(target_num_scores == 10){
+                //     printf("HERE:::::: %f, %d, %d\n", result_score_candidates[j + current_result_index], i, j);
+                // }
+                // if(result_score_candidates[j + current_result_index] > 10000000){
+                //     printf("HERE:::::: %f, %d, %d\n", result_score_candidates[j + current_result_index], i, j);
+                //     // printf(" %f, %d, %d, %d\n", result_score_candidates[j + current_result_index+ 1], index_x, divider, num_scores);
+                // }
                 break;
             }
         }
@@ -401,11 +412,11 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
 
 
 
-    assert(num_scores > 1);
-    assert(target_num_scores > 0);
-    assert(num_scores >= target_num_scores);
-    assert(steps > 0);
-    assert(num_scores > pow(10, steps) * target_num_scores);
+    // [OPTIMIZED] Add runtime parameter validation and error handling
+    if (num_scores <= 1 || target_num_scores <= 0 || num_scores < target_num_scores || steps <= 0 || num_scores <= pow(10, steps) * target_num_scores) {
+        fprintf(stderr, "[ERROR] Invalid parameters in SortScores.\n");
+        return;
+    }
 
     float threshold_score;
     float max_score;
@@ -482,8 +493,15 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
 
         float* cuda_score_candidates_result = NULL;
         int* cuda_score_candidates_index_result = NULL;
-        cudaMalloc(&cuda_score_candidates_result, target_num_scores_for_each_step * sizeof(float));
-        cudaMalloc(&cuda_score_candidates_index_result, target_num_scores_for_each_step * sizeof(int));
+        if (cudaMalloc(&cuda_score_candidates_result, target_num_scores_for_each_step * sizeof(float)) != cudaSuccess) {
+            fprintf(stderr, "[ERROR] cudaMalloc failed for cuda_score_candidates_result.\n");
+            return;
+        }
+        if (cudaMalloc(&cuda_score_candidates_index_result, target_num_scores_for_each_step * sizeof(int)) != cudaSuccess) {
+            fprintf(stderr, "[ERROR] cudaMalloc failed for cuda_score_candidates_index_result.\n");
+            cudaFree(cuda_score_candidates_result);
+            return;
+        }
 
         block_size = num_scores / num_threads;
         if(block_size > 32) block_size = 32;
@@ -493,11 +511,19 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
         num_blocks = dim3(num_score_blocks);
 
 //        cudaDeviceSynchronize();
+        // [OPTIMIZED] Add CUDA error checking for kernel launch
         SortChamferScores<<<num_blocks, threads_in_a_block>>>(cuda_score_candidates, cuda_score_candidates_index,
                                                              cuda_score_candidates_result, cuda_score_candidates_index_result,
                                                              num_scores,
                                                              target_num_per_thread, num_threads,
                                                              threshold_score, max_score);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[ERROR] SortChamferScores kernel launch failed: %s\n", cudaGetErrorString(err));
+            cudaFree(cuda_score_candidates_result);
+            cudaFree(cuda_score_candidates_index_result);
+            return;
+        }
 //        cudaDeviceSynchronize();
         FreeCudaMemory(&cuda_score_candidates);
         FreeCudaMemory(&cuda_score_candidates_index);
@@ -509,8 +535,13 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
     cuda_flat_score_map_index = NULL;
 
     // Copy to CPU
-    cudaMemcpy(score_candidates_result, cuda_score_candidates, num_scores * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(score_candidates_result_index, cuda_score_candidates_index, num_scores * sizeof(int), cudaMemcpyDeviceToHost);
+    // [OPTIMIZED] Add CUDA error checking for memory copy
+    if (cudaMemcpy(score_candidates_result, cuda_score_candidates, num_scores * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        fprintf(stderr, "[ERROR] cudaMemcpy failed for score_candidates_result.\n");
+    }
+    if (cudaMemcpy(score_candidates_result_index, cuda_score_candidates_index, num_scores * sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        fprintf(stderr, "[ERROR] cudaMemcpy failed for score_candidates_result_index.\n");
+    }
 
 
     FreeCudaMemory(&cuda_score_candidates);
@@ -536,11 +567,11 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
     /// score_candidates_result_index: ..
 
 
-    assert(steps > 0);
-    assert(num_score_list.size() == steps);
-    assert(divider_list.size() == steps);
-
-    assert(num_scores_copy > 1);
+    // [OPTIMIZED] Add runtime parameter validation and error handling
+    if (steps <= 0 || num_score_list.size() != steps || divider_list.size() != steps || num_scores_copy <= 1) {
+        fprintf(stderr, "[ERROR] Invalid parameters in SortScores (vector version).\n");
+        return;
+    }
 
     int num_threads;
     int target_num_per_thread;
@@ -595,8 +626,15 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
 
         float* cuda_score_candidates_result = nullptr;
         int* cuda_score_candidates_index_result = nullptr;
-        cudaMalloc(&cuda_score_candidates_result, target_num_scores_for_each_step * sizeof(float));
-        cudaMalloc(&cuda_score_candidates_index_result, target_num_scores_for_each_step * sizeof(int));
+        if (cudaMalloc(&cuda_score_candidates_result, target_num_scores_for_each_step * sizeof(float)) != cudaSuccess) {
+            fprintf(stderr, "[ERROR] cudaMalloc failed for cuda_score_candidates_result.\n");
+            return;
+        }
+        if (cudaMalloc(&cuda_score_candidates_index_result, target_num_scores_for_each_step * sizeof(int)) != cudaSuccess) {
+            fprintf(stderr, "[ERROR] cudaMalloc failed for cuda_score_candidates_index_result.\n");
+            cudaFree(cuda_score_candidates_result);
+            return;
+        }
 
 
         block_size = num_scores / available_cores + 1;
@@ -607,11 +645,19 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
         num_blocks = dim3(num_score_blocks);
 
 //        cudaDeviceSynchronize();
+        // [OPTIMIZED] Add CUDA error checking for kernel launch
         SortChamferScores<<<num_blocks, threads_in_a_block>>>(cuda_score_candidates, cuda_score_candidates_index,
                                                              cuda_score_candidates_result, cuda_score_candidates_index_result,
                                                              num_scores,
                                                              target_num_per_thread, num_threads,
                                                              threshold_score, max_score);
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            fprintf(stderr, "[ERROR] SortChamferScores kernel launch failed: %s\n", cudaGetErrorString(err));
+            cudaFree(cuda_score_candidates_result);
+            cudaFree(cuda_score_candidates_index_result);
+            return;
+        }
 //        cudaDeviceSynchronize();
         FreeCudaMemory(&cuda_score_candidates);
         FreeCudaMemory(&cuda_score_candidates_index);
@@ -624,8 +670,13 @@ void CudaChamfer::SortScores(float* cuda_flat_score_map, int* cuda_flat_score_ma
 //    cuda_flat_score_map_index = nullptr;
 
     // Copy to CPU
-    cudaMemcpy(score_candidates_result, cuda_score_candidates, num_scores * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(score_candidates_result_index, cuda_score_candidates_index, num_scores * sizeof(int), cudaMemcpyDeviceToHost);
+    // [OPTIMIZED] Add CUDA error checking for memory copy
+    if (cudaMemcpy(score_candidates_result, cuda_score_candidates, num_scores * sizeof(float), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        fprintf(stderr, "[ERROR] cudaMemcpy failed for score_candidates_result.\n");
+    }
+    if (cudaMemcpy(score_candidates_result_index, cuda_score_candidates_index, num_scores * sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
+        fprintf(stderr, "[ERROR] cudaMemcpy failed for score_candidates_result_index.\n");
+    }
 
     FreeCudaMemory(&cuda_score_candidates);
     FreeCudaMemory(&cuda_score_candidates_index);
@@ -661,12 +712,12 @@ int device_wise_sort(float* input_value, int* input_index, int input_size, float
     int     *h_values_result           = new int[input_size];
     cudaMemcpy(h_keys_result, d_keys.Current(), sizeof(float) * input_size, cudaMemcpyDeviceToHost);
     cudaMemcpy(h_values_result, d_values.Current(), sizeof(int) * input_size, cudaMemcpyDeviceToHost);
-    // Print results
-    if(dm::log){
-        for (int i = 0; i < 20 ; ++i) {
-            printf("%d: %d, %f\n", i, h_values_result[i], h_keys_result[i]);
-        }
-    }
+    // [OPTIMIZED] Commented out debug printfs for industrial code cleanliness
+    // if(dm::log){
+    //     for (int i = 0; i < 20 ; ++i) {
+    //         printf("%d: %d, %f\n", i, h_values_result[i], h_keys_result[i]);
+    //     }
+    // }
 
     for (int i = 0; i < target_size; ++i) {
         output_value[i] = h_keys_result[i];
@@ -675,23 +726,24 @@ int device_wise_sort(float* input_value, int* input_index, int input_size, float
     if (h_values_result) delete[] h_values_result;
     if (h_keys_result) delete[] h_keys_result;
 
-//    if(dm::log){
-//        printf("---------------------------------\n");
-//        h_keys_result              = new float[input_size];
-//        h_values_result           = new int[input_size];
-//        cudaMemcpy(h_keys_result, d_keys.d_buffers[0], sizeof(float) * input_size, cudaMemcpyDeviceToHost);
-//        cudaMemcpy(h_values_result, d_values.d_buffers[0], sizeof(int) * input_size, cudaMemcpyDeviceToHost);
-//        // Print results
-//        for (int i = 0; i < 30 ; ++i) {
-//            printf("%d: %d, %f\n", i, h_values_result[i], h_keys_result[i]);
-//        }
-//        printf("\n");
-//        // Cleanup
-//        if (h_values_result) delete[] h_values_result;
-//        if (h_keys_result) delete[] h_keys_result;
-//    }
-//    if (d_keys.d_buffers[0]) cudaFree(d_keys.d_buffers[0]);
-//    if (d_values.d_buffers[0]) cudaFree(d_values.d_buffers[0]);
+    // [OPTIMIZED] Commented out debug printfs and unused code for industrial code cleanliness
+    // if(dm::log){
+    //     printf("---------------------------------\n");
+    //     h_keys_result              = new float[input_size];
+    //     h_values_result           = new int[input_size];
+    //     cudaMemcpy(h_keys_result, d_keys.d_buffers[0], sizeof(float) * input_size, cudaMemcpyDeviceToHost);
+    //     cudaMemcpy(h_values_result, d_values.d_buffers[0], sizeof(int) * input_size, cudaMemcpyDeviceToHost);
+    //     // Print results
+    //     for (int i = 0; i < 30 ; ++i) {
+    //         printf("%d: %d, %f\n", i, h_values_result[i], h_keys_result[i]);
+    //     }
+    //     printf("\n");
+    //     // Cleanup
+    //     if (h_values_result) delete[] h_values_result;
+    //     if (h_keys_result) delete[] h_keys_result;
+    // }
+    // if (d_keys.d_buffers[0]) cudaFree(d_keys.d_buffers[0]);
+    // if (d_values.d_buffers[0]) cudaFree(d_values.d_buffers[0]);
     if (d_temp_storage) cudaFree(d_temp_storage);
     if (cu_output_val) cudaFree(cu_output_val);
     if (cu_output_index) cudaFree(cu_output_index);

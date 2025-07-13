@@ -1,10 +1,12 @@
 #ifndef MATCHINGUI_H
 #define MATCHINGUI_H
 
+// C++ Standard Library
+#include <chrono>
+#include <cmath>
+
+// Qt
 #include <QMainWindow>
-#include <opencv2/opencv.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
 #include <QString>
 #include <QDebug>
 #include <QImage>
@@ -19,9 +21,16 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QFileDialog>
-#include <chrono>
 #include <QActionGroup>
+#include <QMutex>
+#include <QThread>
 
+// OpenCV
+#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+// Project-specific
 #include "PLCComm/plcconnector.h"
 #include "custompicturebox.h"
 #include "Camera/capturethreadl.h"
@@ -29,12 +38,21 @@
 #include "Chamfer/matchingcontainer.h"
 #include "globalparams.h"
 #include "Log/timelog.h"
-
+#include "Camera/Calibration.h"
+#include "robotposetrans.h"
+#include "custompicturepanel.h"
+#include "Utils/initsetup.h"
 
 namespace Ui {
 class MatchingUI;
 }
 
+/**
+ * @brief The main window for the Chamfer Matching application.
+ *
+ * This class manages the user interface, orchestrates the interactions between
+ * the camera, PLC, matching algorithms, and handles user input.
+ */
 class MatchingUI : public QMainWindow
 {
     Q_OBJECT
@@ -42,81 +60,38 @@ class MatchingUI : public QMainWindow
 public:
     explicit MatchingUI(QWidget *parent = 0);
     ~MatchingUI();
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void on_btn_load_img_clicked();
-
+    // --- UI Action Slots ---
     void onModeChanged(QAction *action);
     void onMethodChanged(QAction *action);
+    void on_btn_connect_clicked();
+    void on_btn_connect_plc_clicked(bool checked);
+    void on_btn_train_data_clicked();
+    void on_btn_run_clicked();
+    void on_btn_capture_clicked();
+    void on_btn_loadImage_clicked();
 
-    // Slots for signals from CustomPictureBox
+    // --- Custom Widget Slots ---
     void onTemplatesChanged(const QMap<int, CustomPictureBox::TemplateData> &templates);
     void onRoisChanged(const QMap<int, CustomPictureBox::TemplateData> &rois);
 
-    void on_btn_connect_clicked();
-    void update_image_mat(cv::Mat img);
+    // --- Camera Slots ---
     void update_QImage(QImage img);
 
-    void on_btn_train_data_clicked();
-
-    void on_btn_run_clicked();
-
-    void on_btn_connect_plc_clicked();
-
-    void on_btn_send_clicked();
-
-private:
-    void setupConnections();
-    void updateModeLabel(const QString& mode);
-    void updateMethodLabel(const QString& method);
-    void saveRois(const QMap<int, CustomPictureBox::TemplateData> &rois);
-    void loadRois(const QSize &imageSize);
-    void saveTemplatesInfo();
-    void loadTemplatesInfo();
-    void setTrain(const bool& train);
-    void setSetting(const bool& setting);
-    void setCapture(const bool& capture);
-    void drawResult(cv::Mat &image, const std::vector<cv::Point> &points, const QRect &roi);
-//    void processAndDisplayResults(const CoorData& result1, const QRect& roi1, const CoorData& result2, const QRect& roi2);
-    void SleepByQtimer(unsigned int timeout_ms);
-    bool isconnectPLC = false;
-
-    Ui::MatchingUI *ui;
-    CustomPictureBox *mainPictureBox;
-    QActionGroup *modeActionGroup;
-    QActionGroup *methodActionGroup;
-
-    // ================PLC Communication===================================
-    PlcConnector *connector_plc_;
-    QThread *thread_plc_;
-    uint16_t plc_status_;
+    // --- PLC Slots ---
+    void UpdatePlcStatus(uint16_t st);
+    void UpdatePLCState(bool state);
+    void PrintPlcLogs(QString msg);
+    void ActionAlign();
+    void StopPlcThread();
+    void FinishPlcCmd();
 
 
-    //=====================================================================
-
-    // ================Camera Pylon===================================
-    CaptureThreadL *camL;
-    QPixmap lastpixmap;
-    QPixmap template1, template2;
-    QRect template_roi_1, template_roi_2;
-    // Store initial trained template positions
-    QRect m_trained_template_roi1, m_trained_template_roi2;
-    float m_trained_angle;
-    QPixmap ROIpx1, ROIpx2;
-    QRect roi_rect_1, roi_rect_2;
-    QMutex *mutex_shared;
-    // ================Chamfer Matching===============================
-    float focusx, focusy, a;
-    MatchingContainer m_container1;
-    MatchingContainer m_container2;
-    // Store template data as members
-    QPixmap m_template_pixmap1, m_template_pixmap2;
-    cv::Mat m_template_mat1, m_template_mat2;
-
-
-    // Store ROI data for tesing
-    QRect m_roi_rect1, m_roi_rect2;
-signals:    // signal for PLC thread. Jimmy.
+signals:
+    // --- PLC Signals ---
     void signalPlcInit();
     void signalPlcSetPath(QString, QString);
     void signalPlcDisconnect(bool);
@@ -124,28 +99,73 @@ signals:    // signal for PLC thread. Jimmy.
     void signalPlcLoadSetting();
     void signalPlcWriteSetting();
     void signalPlcSetCCDTrig();
-    void signalPlcSetWaitPlcAckSuccess(bool);
     void signalPlcSetWaitingPlcAck(bool);
     void signalPlcSetStatus(uint16_t);
     void signalPlcSetCurrentRecipeNum(uint16_t);
-    void signalPlcWriteResult(int32_t, int32_t, int32_t, int32_t, PlcWriteMode); //result=> 0: continue; 1: finish; 2: NG
+    void signalPlcWriteResult(int32_t, int32_t, int32_t, int32_t, PlcWriteMode);
     void signalPlcWriteCurrentRecipeNum();
     void signalPlcWriteCurrentErrorCodeNum(QString);
     void signalPlcGetStatus();
 
-private slots:
-    void UpdatePlcStatus(uint16_t st) { plc_status_ = st; }
-    void UpdatePLCState(bool state);
-    void PrintPlcLogs(QString msg) {  }
-    void FinishPlcCmd(){
-        emit signalPlcSetCCDTrig();
-        emit signalPlcSetStatus(_PLC_IDLE_);
-    }
-    void StopPlcThread(){
-        thread_plc_->quit();
-        thread_plc_->wait();
-    }
-    void ActionAlign();
+private:
+    // --- Initialization Functions ---
+    void setupUI();
+    void setupActionsAndConnections();
+    void setupPLC();
+    void setupCamera();
+    void setupMatching();
+    void loadAppSettings();
+    void updateUIFromSettings();
+
+    // --- Core Logic Functions ---
+    void saveRois(const QMap<int, CustomPictureBox::TemplateData> &rois);
+    void loadRois(const QSize &imageSize);
+    void saveTemplatesInfo();
+    void loadTemplatesInfo();
+    void setTrainMode(bool enabled);
+    void setSettingMode(bool enabled);
+    void drawResult(cv::Mat &image, const std::vector<cv::Point> &points, const QRect &roi);
+    void SleepByQtimer(unsigned int timeout_ms);
+
+    // --- UI Components ---
+    Ui::MatchingUI *ui;
+    CustomPicturePanel *mainPicturePanel;
+    QActionGroup *modeActionGroup;
+    QActionGroup *methodActionGroup;
+    CustomPictureBox* getPictureBox() const { return mainPicturePanel ? mainPicturePanel->getPictureBox() : nullptr; }
+
+    // --- Application Logic & State ---
+    InitSetup *m_initSetup;
+    CustomPictureBox::Mode current_mode;
+    RobotPoseTrans *transformer;
+
+    // --- PLC Communication ---
+    PlcConnector *connector_plc_;
+    QThread *thread_plc_;
+    uint16_t plc_status_;
+    bool isconnectPLC;
+
+    // --- Camera & Image Data ---
+    CaptureThreadL *camL;
+    QPixmap lastpixmap;
+    Calibration *calibration_;
+    double mmPerPixel;
+    QMutex *mutex_shared;
+
+    // --- Chamfer Matching ---
+    float focusx, focusy, a; // 'a' is a distance in mm
+    MatchingContainer m_container1;
+    MatchingContainer m_container2;
+
+    // Template data
+    QPixmap m_template_pixmap1, m_template_pixmap2;
+    cv::Mat m_template_mat1, m_template_mat2;
+    QRect template_roi_1, template_roi_2;
+    QRect m_trained_template_roi1, m_trained_template_roi2;
+    float m_trained_angle;
+
+    // ROI data
+    QRect m_roi_rect1, m_roi_rect2;
 };
 
 #endif // MATCHINGUI_H

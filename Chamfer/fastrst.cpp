@@ -87,15 +87,15 @@ std::vector<Point> FastRST::match(Mat &templateImg, Mat &sourceImg)
         const s_SingleTargetMatch& best = m_vecSingleTargetData[0];
         // 0: center, 1: orientation (tính từ center đến ptRT), 2-5: 4 điểm rectangle (LT, RT, RB, LB)
         vMatchedPoint.push_back(cv::Point(static_cast<int>(best.ptCenter.x), static_cast<int>(best.ptCenter.y)));
-        
+        vMatchedPoint.push_back(cv::Point(static_cast<int>((best.ptLT.x + best.ptRT.x) / 2), static_cast<int>((best.ptLT.y + best.ptRT.y) / 2)));
         vMatchedPoint.push_back(cv::Point(static_cast<int>(best.ptLT.x), static_cast<int>(best.ptLT.y)));
 		vMatchedPoint.push_back(cv::Point(static_cast<int>(best.ptRT.x), static_cast<int>(best.ptRT.y)));
         vMatchedPoint.push_back(cv::Point(static_cast<int>(best.ptRB.x), static_cast<int>(best.ptRB.y)));
         vMatchedPoint.push_back(cv::Point(static_cast<int>(best.ptLB.x), static_cast<int>(best.ptLB.y)));
         // Đảm bảo đủ 6 điểm (nếu cần, có thể thêm lại center hoặc orientation)
-        if (vMatchedPoint.size() < 6) {
-            while (vMatchedPoint.size() < 6) vMatchedPoint.push_back(vMatchedPoint[0]);
-        }
+//        if (vMatchedPoint.size() < 6) {
+//            while (vMatchedPoint.size() < 6) vMatchedPoint.push_back(vMatchedPoint[0]);
+//        }
     }
     return vMatchedPoint;
 }

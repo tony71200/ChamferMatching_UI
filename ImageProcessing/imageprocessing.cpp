@@ -261,6 +261,7 @@ void ImageProcessing::GetImageBySavedInfo(cv::Mat& img, cv::Mat& out_img, bool u
 }
 
 void ImageProcessing::GetImageBySavedInfo(cv::Mat& img, cv::Mat& out_img, ImageParams iparam){
+    if (img.empty()) return;
     cv::Mat converted_img;
     if(img.channels() > 1)
         cv::cvtColor(img, converted_img, cv::COLOR_BGR2GRAY);

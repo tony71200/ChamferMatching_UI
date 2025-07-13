@@ -1,19 +1,32 @@
 #include "matchingui.h"
 #include "ui_matchingui.h"
+
+// C++ Standard Library
+#include <cmath>
+
+// Qt
 #include <QFile>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include <QBuffer>
 #include <QPainter>
 #include <QFileDialog>
-#include <cmath>
+#include <QTimer>
+#include <QDateTime>
+
+// Project-specific
 #include "Camera/Alignment.h"
 
 #ifdef M_PI
-#define M_PI 3.14159265358979323846
+#undef M_PI
 #endif
+#define M_PI 3.14159265358979323846
 
-
+/**
+ * @brief Converts a QPixmap to a cv::Mat.
+ * @param pixmap The input QPixmap.
+ * @return The converted cv::Mat in BGR format.
+ */
 cv::Mat QPixmapToCVMat(const QPixmap &pixmap) {
     QImage image = pixmap.toImage().convertToFormat(QImage::Format_RGB888);
     cv::Mat mat(image.height(), image.width(), CV_8UC3, (void*)image.bits(), image.bytesPerLine());
@@ -22,6 +35,11 @@ cv::Mat QPixmapToCVMat(const QPixmap &pixmap) {
     return bgrMat;
 }
 
+
+/******************************************************************************
+ *                            CONSTRUCTOR & DESTRUCTOR                          *
+ ******************************************************************************/
+
 MatchingUI::MatchingUI(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MatchingUI),
@@ -29,300 +47,673 @@ MatchingUI::MatchingUI(QWidget *parent) :
     m_container2(".", "template2")
 {
     ui->setupUi(this);
-    ui->menuBar->setNativeMenuBar(false);
-    setMenuBar(ui->menuBar);
-    // Create and add the custom widget
-    mainPictureBox = new CustomPictureBox(this);
-    ui->right_pane_layout->insertWidget(1, mainPictureBox);
 
-    setupConnections();
-    focusx = 12.5f; // mm
-    focusy = 12.5f; // mm
-    a = 100.0f; // mm
-    // ================PLC Communication===================================
-    // PLC connection by Jimmy. 20220119
-    plc_status_ = 0;
-    connector_plc_ = new PlcConnector();
-    thread_plc_ = new QThread();
-
-    connector_plc_->moveToThread(thread_plc_);
-    QObject::connect(ui->btn_connect_plc, &QPushButton::clicked, this, &MatchingUI::on_btn_connect_plc_clicked);
-
-    //QObject::connect(this, &MatchingUI::signalPlcSetPath, connector_plc_, &PlcConnector::SetProjectPath);
-    QObject::connect(this, &MatchingUI::signalPlcInit, connector_plc_, &PlcConnector::Initialize);
-    QObject::connect(this, &MatchingUI::signalPlcDisconnect, connector_plc_, &PlcConnector::Disconnect);
-    QObject::connect(this, &MatchingUI::signalPlcLoadDefaultSetting, connector_plc_, &PlcConnector::LoadDefaultSettingfromINIFile);
-    QObject::connect(this, &MatchingUI::signalPlcWriteSetting, connector_plc_, &PlcConnector::WriteSetting2File);
-    QObject::connect(this, &MatchingUI::signalPlcSetWaitingPlcAck, connector_plc_, &PlcConnector::SetWaitingPlcAck);
-    QObject::connect(this, &MatchingUI::signalPlcWriteResult, connector_plc_, &PlcConnector::WriteResult, Qt::BlockingQueuedConnection);
-    QObject::connect(this, &MatchingUI::signalPlcWriteCurrentRecipeNum, connector_plc_, &PlcConnector::WriteCurrentRecipeNum);
-    QObject::connect(this, &MatchingUI::signalPlcWriteCurrentErrorCodeNum, connector_plc_, &PlcConnector::WriteCurrentErrorCodeNum); //garly_20220617
-
-    QObject::connect(this, &MatchingUI::signalPlcSetCCDTrig, connector_plc_, &PlcConnector::SetCCDTrig, Qt::BlockingQueuedConnection);
-    QObject::connect(this, &MatchingUI::signalPlcSetStatus, connector_plc_, &PlcConnector::SetPlcStatus);
-    QObject::connect(this, &MatchingUI::signalPlcSetCurrentRecipeNum, connector_plc_, &PlcConnector::SetCurrentRecipeNum);
-    QObject::connect(this, &MatchingUI::signalPlcLoadSetting, connector_plc_, &PlcConnector::LoadSettingfromFile);
-    QObject::connect(this, &MatchingUI::signalPlcGetStatus, connector_plc_, &PlcConnector::GetPLCStatus);
-
-//    QObject::connect(connector_plc_, &PlcConnector::signalErrorLoadingParmSetting, this, [this](){
-//        WarningMsgDialog* wmsg = new WarningMsgDialog(this, "警告 ( Warning )",
-//                                    "PLC參數設定讀取錯誤，且無法取得備份參數，將PLC參數回歸為預設值\n"
-//                                    "請重新設定PLC參數設定!",
-//                                    Qt::WA_DeleteOnClose, Qt::FramelessWindowHint);
-//        wmsg->move((this->width()/* - wmsg->width()*/)/2, (this->height() - wmsg->height())/2);
-//    });
-
-    QObject::connect(thread_plc_, &QThread::finished, connector_plc_, &QObject::deleteLater);
-    QObject::connect(thread_plc_, &QThread::finished, thread_plc_, &QObject::deleteLater);
-    /// Set wild pointer to nullptr
-    QObject::connect(thread_plc_, &QObject::destroyed, this, [this](){ thread_plc_ = nullptr; });
-    QObject::connect(connector_plc_, &QObject::destroyed, this,[this](){ connector_plc_ = nullptr;});
-
-    QObject::connect(connector_plc_, &PlcConnector::signalActionAlignment, this, &MatchingUI::ActionAlign);
-//    QObject::connect(connector_plc_, &PlcConnector::signalActionSetRef, this, &MatchingUI::ActionSetRef);
-    QObject::connect(connector_plc_, &PlcConnector::signalState, this, &MatchingUI::UpdatePLCState);
-//    QObject::connect(connector_plc_, &PlcConnector::signalResetAllParameters, this, [this](){
-//        RecordLastModifiedTime();   // Record closed time. Jimmy 20220518.
-//        is_reset_CCDsys_ = true;
-//        ResetAllParameters();
-//    });
-    //QObject::connect(connector_plc_, &PlcConnector::signalActionAlignment, this, &MatchingUI::CheckLightSourceEnableTiming);
-    //QObject::connect(connector_plc_, &PlcConnector::signalChangeRecipe, this, &MatchingUI::ChangeRecipe);
-    QObject::connect(connector_plc_, &PlcConnector::signalStatus, this, &MatchingUI::UpdatePlcStatus);
-    QObject::connect(connector_plc_, &PlcConnector::signalLogs, this, &MatchingUI::PrintPlcLogs);
-    // connect(plcConnector, &PLCConnector::plcError, this, &MatchingUI::on_plc_error);
-    // connect(plcConnector, &PLCConnector::plcDataReceived, this, &MatchingUI::on_plc_data_received);
-    // connect(plcConnector, &PLCConnector::plcDataSent, this, &MatchingUI::on_plc_data_sent);
-    // connect(plcConnector, &PLCConnector::plcDataReceived, this, &MatchingUI::on_plc_data_received);
-//    QObject::connect(thread_plc_, &QThread::finished, connector_plc_, &QObject::deleteLater);
-//    QObject::connect(thread_plc_, &QThread::finished, thread_plc_, &QObject::deleteLater);
-//    QObject::connect(thread_plc_, &QObject::destroyed, this, [this](){ thread_plc_ = nullptr; });
-//    QObject::connect(connector_plc_, &QObject::destroyed, this,[this](){ connector_plc_ = nullptr;});
-//    QObject::connect(connector_plc_, &PlcConnector::signalState, this, &MatchingUI::on_plc_connected);
-//    QObject::connect(this, &MatchingUI::signalPlcInit, connector_plc_, &PlcConnector::Initialize);
-//    QObject::connect(this, &MatchingUI::signalPlcDisconnect, connector_plc_, &PlcConnector::Disconnect);
-
-
-//    QObject::connect(connector_plc_, &PlcConnector::signalActionAlignment, this, &MatchingUI::on_plc_actionAlignment);
-//    QObject::connect(this, &MatchingUI::signalPlcWriteResult, connector_plc_, &PlcConnector::WriteResult, Qt::BlockingQueuedConnection);
-
-
-    //=====================================================================
-
-    // Set initial mode and method
-    updateModeLabel(ui->actionTrain->text());
-    mainPictureBox->setMode(CustomPictureBox::Training);
-    updateMethodLabel(ui->actionChamfer->text());
-
-    camL = new CaptureThreadL(this);
-    camL->using_default_parameter = true;
-//    qRegisterMetaType<cv::Mat>("cv::Mat");
-//    QObject::connect(camL, SIGNAL(ProcessedImgL(cv::Mat)), this, SLOT(update_image_mat(cv::Mat)));
-    QObject::connect(camL, &CaptureThreadL::frameReady, this, &MatchingUI::update_QImage);
-    m_container1.SetUseCudaForImageProcessing(true);
-    m_container2.SetUseCudaForImageProcessing(true);
-    loadTemplatesInfo();
-    ui->lbl_ref_c1->setText(QString("%1-%2").arg(m_trained_template_roi1.center().x()).arg(m_trained_template_roi1.center().y()));
-    ui->lbl_ref_c2->setText(QString("%1-%2").arg(m_trained_template_roi2.center().x()).arg(m_trained_template_roi2.center().y()));
-    ui->lbl_ref_p->setText(QString("%1-%2").arg((m_trained_template_roi1.center().x() + m_trained_template_roi2.center().x())/2).arg((m_trained_template_roi1.center().y() + m_trained_template_roi2.center().y())/2));
-    ui->lbl_ref_a->setText(QString("%1").arg(m_trained_angle));
+    setupUI();
+    setupActionsAndConnections();
+    loadAppSettings();
+    setupPLC();
+    setupCamera();
+    setupMatching();
+    updateUIFromSettings();
 }
 
 MatchingUI::~MatchingUI()
 {
-    delete ui;
-    if (camL->isRunning()){
+    m_initSetup->SaveSettings("uiSetting.ini");
+    delete m_initSetup;
+
+    if (camL && camL->isRunning()){
         camL->Stop();
     }
     delete camL;
-    mutex_shared->unlock();
-    delete mutex_shared;    
-    emit signalPlcDisconnect(false);
-    thread_plc_->quit();
-    thread_plc_->wait();
+
+    if (thread_plc_ && thread_plc_->isRunning()) {
+        emit signalPlcDisconnect(false);
+        StopPlcThread();
+    }
+
+    delete ui;
 }
 
-void MatchingUI::setupConnections()
-{
-    // Connect signals from mainPictureBox to slots in MatchingUI
-    connect(mainPictureBox, &CustomPictureBox::templatesChanged, this, &MatchingUI::onTemplatesChanged);
-    connect(mainPictureBox, &CustomPictureBox::roisChanged, this, &MatchingUI::onRoisChanged);
+/******************************************************************************
+ *                               INITIALIZATION                               *
+ ******************************************************************************/
 
-    // Group actions for Mode
+/**
+ * @brief Sets up UI components that are not created in Qt Designer.
+ */
+void MatchingUI::setupUI() {
+    ui->menuBar->setNativeMenuBar(false);
+    setMenuBar(ui->menuBar);
+
+    mainPicturePanel = new CustomPicturePanel(this);
+    mainPicturePanel->setMinimumWidth(400);
+    mainPicturePanel->setSizePolicy(QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Preferred);
+    ui->right_pane_layout->addWidget(mainPicturePanel, 1);
+}
+
+/**
+ * @brief Sets up QAction groups and connects signals/slots for the application.
+ */
+void MatchingUI::setupActionsAndConnections()
+{
+    // --- Picture Panel -> UI ---
+    connect(mainPicturePanel, &CustomPicturePanel::templatesChanged, this, &MatchingUI::onTemplatesChanged);
+    connect(mainPicturePanel, &CustomPicturePanel::roisChanged, this, &MatchingUI::onRoisChanged);
+
+    // --- Action Groups ---
     modeActionGroup = new QActionGroup(this);
     modeActionGroup->addAction(ui->actionTrain);
     modeActionGroup->addAction(ui->actionSetting);
     modeActionGroup->addAction(ui->actionTest);
+    modeActionGroup->addAction(ui->actionMeasure);
     modeActionGroup->setExclusive(true);
     connect(modeActionGroup, &QActionGroup::triggered, this, &MatchingUI::onModeChanged);
 
-    // Group actions for Method
     methodActionGroup = new QActionGroup(this);
     methodActionGroup->addAction(ui->actionChamfer);
     methodActionGroup->addAction(ui->actionFastRST);
     methodActionGroup->setExclusive(true);
     connect(methodActionGroup, &QActionGroup::triggered, this, &MatchingUI::onMethodChanged);
-    ui->btn_train_data->setEnabled(false);
-    ui->btn_load_img->setEnabled(true);
-    ui->btn_run->setEnabled(false);
 
+    // --- Buttons ---
+    connect(ui->btn_capture, &QPushButton::clicked, this, &MatchingUI::on_btn_capture_clicked);
+    connect(ui->btn_connect_plc, &QCheckBox::clicked, this, &MatchingUI::on_btn_connect_plc_clicked);
 }
 
-void MatchingUI::on_btn_load_img_clicked()
-{
-//    QString fileName = QFileDialog::getOpenFileName(this,
-//                                                    tr("Open Image"), "", tr("Image Files (*.png *.jpg *.bmp)"));
-//    if (!fileName.isEmpty()) {
-//        QPixmap pixmap(fileName);
-//        if(!pixmap.isNull()) {
-//            mainPictureBox->setImage(pixmap);
-
-//            ui->lbl_display_1->clear();
-//            ui->lbl_display_2->clear();
-
-//            // Load ROIs for the new image
-//            loadRois(pixmap.size());
-//        }
-//    }
-    if (camL->isRunning()){
-
-        camL->Stop();
-
-    }
-    else {
-        QString fileName = QFileDialog::getOpenFileName(this,
-                                                       tr("Open Image"), "", tr("Image Files (*.png *.jpg *.bmp)"));
-        if (!fileName.isEmpty()) {
-            QPixmap pix(fileName);
-            lastpixmap = pix.copy();
-        }
-    }
-    setCapture(false);
-
-    if(!lastpixmap.isNull() && camL->isStopped()) {
-        mainPictureBox->setImage(lastpixmap);
-//        ui->lbl_display_1->clear();
-//        ui->lbl_display_2->clear();
-        loadRois(lastpixmap.size());
-    }
-    setTrain(true);
-
+/**
+ * @brief Loads application settings from the INI file.
+ */
+void MatchingUI::loadAppSettings() {
+    m_initSetup = new InitSetup();
+    m_initSetup->LoadSettings("uiSetting.ini");
 }
 
+/**
+ * @brief Sets up the PLC connector and its thread.
+ */
+void MatchingUI::setupPLC() {
+    plc_status_ = 0;
+    isconnectPLC = false;
+    connector_plc_ = new PlcConnector();
+    thread_plc_ = new QThread();
+
+    connector_plc_->moveToThread(thread_plc_);
+
+    // --- UI -> PLC ---
+    connect(this, &MatchingUI::signalPlcInit, connector_plc_, &PlcConnector::Initialize);
+    connect(this, &MatchingUI::signalPlcSetPath, connector_plc_, &PlcConnector::SetProjectPath);
+    connect(this, &MatchingUI::signalPlcDisconnect, connector_plc_, &PlcConnector::Disconnect);
+    connect(this, &MatchingUI::signalPlcLoadDefaultSetting, connector_plc_, &PlcConnector::LoadDefaultSettingfromINIFile);
+    connect(this, &MatchingUI::signalPlcWriteSetting, connector_plc_, &PlcConnector::WriteSetting2File);
+    connect(this, &MatchingUI::signalPlcSetWaitingPlcAck, connector_plc_, &PlcConnector::SetWaitingPlcAck);
+    connect(this, &MatchingUI::signalPlcWriteResult, connector_plc_, &PlcConnector::WriteResult, Qt::BlockingQueuedConnection);
+    connect(this, &MatchingUI::signalPlcWriteCurrentRecipeNum, connector_plc_, &PlcConnector::WriteCurrentRecipeNum);
+    connect(this, &MatchingUI::signalPlcWriteCurrentErrorCodeNum, connector_plc_, &PlcConnector::WriteCurrentErrorCodeNum);
+    connect(this, &MatchingUI::signalPlcSetCCDTrig, connector_plc_, &PlcConnector::SetCCDTrig, Qt::BlockingQueuedConnection);
+    connect(this, &MatchingUI::signalPlcSetStatus, connector_plc_, &PlcConnector::SetPlcStatus);
+    connect(this, &MatchingUI::signalPlcSetCurrentRecipeNum, connector_plc_, &PlcConnector::SetCurrentRecipeNum);
+    connect(this, &MatchingUI::signalPlcLoadSetting, connector_plc_, &PlcConnector::LoadSettingfromFile);
+    connect(this, &MatchingUI::signalPlcGetStatus, connector_plc_, &PlcConnector::GetPLCStatus);
+
+    // --- PLC -> UI ---
+    connect(connector_plc_, &PlcConnector::signalActionAlignment, this, &MatchingUI::ActionAlign);
+    connect(connector_plc_, &PlcConnector::signalState, this, &MatchingUI::UpdatePLCState);
+    connect(connector_plc_, &PlcConnector::signalStatus, this, &MatchingUI::UpdatePlcStatus);
+    connect(connector_plc_, &PlcConnector::signalLogs, this, &MatchingUI::PrintPlcLogs);
+
+    // --- Thread Management ---
+    connect(thread_plc_, &QThread::finished, connector_plc_, &QObject::deleteLater);
+    connect(thread_plc_, &QThread::finished, thread_plc_, &QObject::deleteLater);
+    connect(thread_plc_, &QObject::destroyed, this, [this](){ thread_plc_ = nullptr; });
+    connect(connector_plc_, &QObject::destroyed, this,[this](){ connector_plc_ = nullptr;});
+
+    emit signalPlcInit();
+}
+
+/**
+ * @brief Sets up the camera capture thread.
+ */
+void MatchingUI::setupCamera() {
+    camL = new CaptureThreadL(this);
+    camL->setPathFolderSave(m_initSetup->getPathSaveCapture());
+    camL->using_default_parameter = true;
+    camL->mutex_shared = mutex_shared;
+    connect(camL, &CaptureThreadL::frameReady, this, &MatchingUI::update_QImage);
+}
+
+/**
+ * @brief Initializes matching-related components.
+ */
+void MatchingUI::setupMatching() {
+    a = 100.0f; // mm
+
+    calibration_ = new Calibration();
+    if (calibration_->loadFromJson(m_initSetup->getPathCalibration())) {
+        mmPerPixel = calibration_->getMmPerPixel();
+        ui->log_text_edit->append(QString("[Calibration] distanceCamera: %1cm, mmPerPixel: %2")
+                                  .arg(calibration_->getDistanceCamera()).arg(mmPerPixel));
+    } else {
+        mmPerPixel = 0.08;
+        ui->log_text_edit->append("[Calibration] Load failed, using default values.");
+    }
+
+    m_container1.SetUseCudaForImageProcessing(true);
+    m_container2.SetUseCudaForImageProcessing(true);
+    loadTemplatesInfo();
+
+    ui->lbl_ref_c1->setText(QString("%1, %2").arg(m_trained_template_roi1.center().x()).arg(m_trained_template_roi1.center().y()));
+    ui->lbl_ref_c2->setText(QString("%1, %2").arg(m_trained_template_roi2.center().x()).arg(m_trained_template_roi2.center().y()));
+    ui->lbl_ref_p->setText(QString("%1, %2").arg((m_trained_template_roi1.center().x() + m_trained_template_roi2.center().x())/2.0f, 0, 'f', 1).arg((m_trained_template_roi1.center().y() + m_trained_template_roi2.center().y())/2.0f, 0, 'f', 1));
+    ui->lbl_ref_a->setText(QString("%1").arg(m_trained_angle, 0, 'f', 2));
+}
+
+/**
+ * @brief Updates the UI state based on the loaded settings.
+ */
+void MatchingUI::updateUIFromSettings() {
+    QString initialMode = m_initSetup->getMode();
+    if (initialMode == ui->actionTrain->text()) {
+        ui->actionTrain->setChecked(true);
+    } else if (initialMode == ui->actionSetting->text()) {
+        ui->actionSetting->setChecked(true);
+    } else if (initialMode == ui->actionMeasure->text()) {
+        ui->actionMeasure->setChecked(true);
+    } else {
+        ui->actionTest->setChecked(true);
+    }
+    onModeChanged(modeActionGroup->checkedAction());
+
+    QString initialMethod = m_initSetup->getMethod();
+    if (initialMethod == ui->actionFastRST->text()) {
+        ui->actionFastRST->setChecked(true);
+    } else {
+        ui->actionChamfer->setChecked(true);
+    }
+    onMethodChanged(methodActionGroup->checkedAction());
+}
+
+void MatchingUI::resizeEvent(QResizeEvent *event) {
+    Q_UNUSED(event);
+    ui->lbl_display_1->update();
+    ui->lbl_display_2->update();
+    this->update();
+}
+
+/******************************************************************************
+ *                                  UI SLOTS                                  *
+ ******************************************************************************/
+
+/**
+ * @brief Handles mode changes from the UI (Train, Setting, Test, Measure).
+ * @param action The triggered QAction.
+ */
 void MatchingUI::onModeChanged(QAction *action)
 {
-    updateModeLabel(action->text());
+    if (!action) return;
+    ui->lbl_mode_value->setText(action->text());
+    m_initSetup->setMode(action->text());
+
     if (action == ui->actionTrain) {
-        mainPictureBox->setMode(CustomPictureBox::Training);
-        setTrain(true);
+        mainPicturePanel->setMode(CustomPictureBox::Training);
+        current_mode = CustomPictureBox::Training;
+        setTrainMode(true);
     } else if (action == ui->actionSetting) {
-        mainPictureBox->setMode(CustomPictureBox::Setting);
-        setSetting(true);
+        mainPicturePanel->setMode(CustomPictureBox::Setting);
+        current_mode = CustomPictureBox::Setting;
+        setSettingMode(true);
     } else if (action == ui->actionTest) {
-        mainPictureBox->setMode(CustomPictureBox::Test);
-        setTrain(true);
+        mainPicturePanel->setMode(CustomPictureBox::Test);
+        current_mode = CustomPictureBox::Test;
+        setTrainMode(true);
+    } else if (action == ui->actionMeasure) {
+        mainPicturePanel->setMode(CustomPictureBox::Measure);
+        current_mode = CustomPictureBox::Measure;
+        setSettingMode(false);
     }
 }
 
+/**
+ * @brief Handles matching method changes from the UI (Chamfer, FastRST).
+ * @param action The triggered QAction.
+ */
 void MatchingUI::onMethodChanged(QAction *action)
 {
-    updateMethodLabel(action->text());
-    // Set MatchingModel for m_container1 and m_container2 based on selected action
-    if (action == ui->actionChamfer) {
-        m_container1.SetMode(MatchingMode::CHAMFER);
-        m_container2.SetMode(MatchingMode::CHAMFER);
-    } else if (action == ui->actionFastRST) {
-        m_container1.SetMode(MatchingMode::FASTRST);
-        m_container2.SetMode(MatchingMode::FASTRST);
-    }
-    // Add logic for method change here
-    qDebug() << "Method changed to:" << action->text();
-}
+    if (!action) return;
+    ui->lbl_method_value->setText(action->text());
+    m_initSetup->setMethod(action->text());
 
-void MatchingUI::updateModeLabel(const QString &mode)
-{
-    ui->lbl_mode_value->setText(mode);
-}
-
-void MatchingUI::updateMethodLabel(const QString &method)
-{
-    ui->lbl_method_value->setText(method);
-}
-
-void MatchingUI::onTemplatesChanged(const QMap<int, CustomPictureBox::TemplateData> &templates)
-{
-    ui->log_text_edit->append(QString("Template list updated. Count: %1").arg(templates.size()));
-    // The labels are only cleared when a new image is loaded, preserving them across mode changes.
+    MatchingMode mode = (action == ui->actionChamfer) ? MatchingMode::CHAMFER : MatchingMode::FASTRST;
+    m_container1.SetMode(mode);
+    m_container2.SetMode(mode);
     ui->lbl_display_1->clear();
     ui->lbl_display_2->clear();
 
-    bool has_template = false;
+    qDebug() << "Method changed to:" << action->text();
+}
+
+/**
+ * @brief Connects/disconnects the camera.
+ */
+void MatchingUI::on_btn_connect_clicked()
+{
+    if (ui->btn_connect->isChecked()) {
+        try {
+            mutex_shared = new QMutex();
+            camL->mutex_shared = mutex_shared;
+            camL->Play();
+            if (camL->IsConnected()){
+                ui->statusBar->showMessage("Connected Camera", 5000);
+                ui->btn_connect->setText("Connected Camera");
+            } else {
+                ui->statusBar->showMessage("Cannot Connect Camera", 5000);
+                ui->btn_connect->setChecked(false);
+            }
+        }
+        catch (const std::exception& e) {
+            qDebug() << "Error in on_btn_connect_clicked:" << e.what();
+            ui->statusBar->showMessage("Cannot Connect Camera", 5000);
+            ui->btn_connect->setChecked(false);
+        }
+    } else {
+        try {
+            camL->Stop();
+            if (camL->isStopped()){
+                ui->statusBar->showMessage("Disconnect Camera", 5000);
+                ui->btn_connect->setText("Connect Camera");
+            }
+        }
+        catch (const std::exception& e) {
+            qDebug() << "Error in on_btn_connect_clicked:" << e.what();
+            ui->statusBar->showMessage("Cannot Connect Camera", 5000);
+            ui->btn_connect->setChecked(false);
+        }
+    }
+}
+
+/**
+ * @brief Connects/disconnects the PLC.
+ * @param checked The checked state of the button.
+ */
+void MatchingUI::on_btn_connect_plc_clicked(bool checked)
+{
+    if (checked) {
+        if (thread_plc_ && !thread_plc_->isRunning()) {
+            thread_plc_->start();
+            emit signalPlcInit();
+        }
+    } else {
+        if (thread_plc_ && thread_plc_->isRunning()) {
+            emit signalPlcDisconnect(false);
+        }
+    }
+}
+
+/**
+ * @brief Initiates the training process for the defined templates.
+ */
+void MatchingUI::on_btn_train_data_clicked()
+{
+    this->setEnabled(false);
+    ui->log_text_edit->append("Starting training process...");
+    QCoreApplication::processEvents();
+
+    if (!m_template_mat1.empty()) m_trained_template_roi1 = template_roi_1;
+    if (!m_template_mat2.empty()) m_trained_template_roi2 = template_roi_2;
+    saveTemplatesInfo();
+
+    float total_time_exec = 0;
+    bool trained_something = false;
+
+    ui->log_text_edit->append("Processing Template 1...");
+    float time1 = m_container1.Train(m_template_mat1);
+    if (time1 > 0) {
+        ui->log_text_edit->append(QString("Template 1 trained successfully in %1 ms").arg(time1 * 1000, 0, 'f', 1));
+        total_time_exec += time1;
+        QPixmap pix = QPixmap::fromImage(QImage(m_container1.GetTrainedTemplateImg().data,
+                                         m_container1.GetTrainedTemplateImg().cols,
+                                         m_container1.GetTrainedTemplateImg().rows,
+                                         m_container1.GetTrainedTemplateImg().step,
+                                         QImage::Format_RGB888).rgbSwapped());
+        if (!pix.isNull()) {
+                    ui->lbl_display_1->setPixmap(pix.scaled(ui->lbl_display_1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                }
+        trained_something = true;
+    } else {
+        ui->log_text_edit->append("Failed to train Template 1.");
+        trained_something = false;
+    }
+
+    ui->log_text_edit->append("Processing Template 2...");
+    float time2 = m_container2.Train(m_template_mat2);
+    if (time2 > 0) {
+        ui->log_text_edit->append(QString("Template 2 trained successfully in %1 ms").arg(time2 * 1000, 0, 'f', 1));
+        total_time_exec += time2;
+        QPixmap pix = QPixmap::fromImage(QImage(m_container2.GetTrainedTemplateImg().data,
+                                         m_container2.GetTrainedTemplateImg().cols,
+                                         m_container2.GetTrainedTemplateImg().rows,
+                                         m_container2.GetTrainedTemplateImg().step,
+                                         QImage::Format_RGB888).rgbSwapped());
+        if (!pix.isNull()) {
+                    ui->lbl_display_2->setPixmap(pix.scaled(ui->lbl_display_2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                }
+        trained_something = true;
+    } else {
+        ui->log_text_edit->append("Failed to train Template 2.");
+        trained_something = false;
+    }
+
+    ui->log_text_edit->append(QString("Total execution time: %1 ms").arg(total_time_exec * 1000, 0, 'f', 1));
+
+    this->setEnabled(true);
+    ui->log_text_edit->append("Training process finished.");
+}
+
+/**
+ * @brief Runs the matching algorithm on the current image.
+ */
+void MatchingUI::on_btn_run_clicked()
+{
+    if (lastpixmap.isNull()) {
+        ui->log_text_edit->append("[ERROR] No image loaded to run test on.");
+        return;
+    }
+    if (m_roi_rect1.isNull() || m_roi_rect2.isNull()) {
+        ui->log_text_edit->append("[ERROR] Both ROIs must be defined for testing.");
+        return;
+    }
+    if (!m_container1.IsTrainedOK() || !m_container2.IsTrainedOK()) {
+        ui->log_text_edit->append("[ERROR] Templates are not trained. Please train first.");
+        return;
+    }
+
+    mainPicturePanel->setImage(lastpixmap);
+    ui->log_text_edit->append("Running inference...");
+    QCoreApplication::processEvents();
+    this->setEnabled(false);
+
+    cv::Mat source_mat = QPixmapToCVMat(lastpixmap);
+    source_mat = calibration_->undistortImage(source_mat);
+    cv::Mat display_mat = source_mat.clone();
+
+    // Run matching on both ROIs
+    cv::Mat src_roi1 = source_mat(cv::Rect(m_roi_rect1.x(), m_roi_rect1.y(), m_roi_rect1.width(), m_roi_rect1.height()));
+    float time1 = m_container1.Test(src_roi1);
+    std::vector<cv::Point> result1 = m_container1.GetResult();
+
+    cv::Mat src_roi2 = source_mat(cv::Rect(m_roi_rect2.x(), m_roi_rect2.y(), m_roi_rect2.width(), m_roi_rect2.height()));
+    float time2 = m_container2.Test(src_roi2);
+    std::vector<cv::Point> result2 = m_container2.GetResult();
+
+    // Process and display results
+    if (result1.empty() || result2.empty()) {
+        ui->log_text_edit->append("Cannot detect one or both objects.");
+        if (isconnectPLC) emit signalPlcWriteResult(0, 0, 0, 2, PlcWriteMode::kOthers);
+    } else {
+        drawResult(display_mat, result1, m_roi_rect1);
+        drawResult(display_mat, result2, m_roi_rect2);
+
+        // Analysis
+        QPoint found_center1(result1[0].x + m_roi_rect1.x(), result1[0].y + m_roi_rect1.y());
+        QPoint found_center2(result2[0].x + m_roi_rect2.x(), result2[0].y + m_roi_rect2.y());
+        QPoint found_center((found_center1.x() + found_center2.x()) / 2.0f, (found_center1.y() + found_center2.y()) / 2.0f);
+
+        float angle_rad = atan2(found_center1.y() - found_center2.y(), found_center1.x() - found_center2.x());
+        float avg_angle_dev = (angle_rad + M_PI/2.0) * 180.0 / M_PI;
+
+        if (current_mode == CustomPictureBox::Training) {
+            m_trained_angle = avg_angle_dev;
+            ui->lbl_ref_c1->setText(QString("%1, %2").arg(m_trained_template_roi1.center().x()).arg(m_trained_template_roi1.center().y()));
+            ui->lbl_ref_c2->setText(QString("%1, %2").arg(m_trained_template_roi2.center().x()).arg(m_trained_template_roi2.center().y()));
+            ui->lbl_ref_p->setText(QString("%1, %2").arg(found_center.x(), 0, 'f', 1).arg(found_center.y(), 0, 'f', 1));
+            ui->lbl_ref_a->setText(QString("%1").arg(m_trained_angle, 0, 'f', 2));
+            saveTemplatesInfo();
+        } else { // Test mode
+            ui->lbl_test_c1->setText(QString("%1, %2").arg(found_center1.x()).arg(found_center1.y()));
+            ui->lbl_test_c2->setText(QString("%1, %2").arg(found_center2.x()).arg(found_center2.y()));
+            ui->lbl_test_p->setText(QString("%1, %2").arg(found_center.x(), 0, 'f', 1).arg(found_center.y(), 0, 'f', 1));
+            ui->lbl_test_a->setText(QString("%1").arg(avg_angle_dev, 0, 'f', 2));
+
+            QPoint trained_center = QPoint((m_trained_template_roi1.center().x() + m_trained_template_roi2.center().x()) / 2.0f,
+                                           (m_trained_template_roi1.center().y() + m_trained_template_roi2.center().y()) / 2.0f);
+            float delta_angle = m_trained_angle - avg_angle_dev;
+            AlignmentResult alignRes = Alignment::compute(trained_center, found_center, delta_angle, mmPerPixel, a);
+
+            ui->lbl_offsetX->setText(QString("%1").arg(alignRes.dx_robot, 0, 'f', 2));
+            ui->lbl_offsetY->setText(QString("%1").arg(alignRes.dy_robot, 0, 'f', 2));
+            ui->lbl_offsetAngle->setText(QString("%1").arg(alignRes.angle_deg, 0, 'f', 2));
+
+            double z_cam = 0.85;
+            Pose robot_pose = transformer->img_2_robot(found_center.x(), found_center.y(), z_cam, -89.9);
+
+            ui->le_pose_x->setText(QString("%1").arg(robot_pose.x, 0, 'f', 2));
+            ui->le_pose_y->setText(QString("%1").arg(robot_pose.y, 0, 'f', 2));
+            ui->le_pose_z->setText(QString("%1").arg(robot_pose.z, 0, 'f', 2));
+            ui->le_pose_rx->setText(QString("%1").arg(robot_pose.rx, 0, 'f', 2));
+            ui->le_pose_ry->setText(QString("%1").arg(robot_pose.ry, 0, 'f', 2));
+            ui->le_pose_rz->setText(QString("%1").arg(robot_pose.rz, 0, 'f', 2));
+
+            if (isconnectPLC) {
+                emit signalPlcWriteResult(alignRes.dx_robot*100, alignRes.dy_robot*100, alignRes.angle_deg*100, 1, PlcWriteMode::kOthers);
+            }
+        }
+    }
+
+    ui->log_text_edit->append(QString("Inference Time: %1 ms").arg((time1 + time2) * 1000, 0, 'f', 2));
+    QPixmap pix = QPixmap::fromImage(QImage(display_mat.data, display_mat.cols, display_mat.rows, display_mat.step, QImage::Format_RGB888).rgbSwapped());
+    mainPicturePanel->setImage(pix);
+
+    if (m_initSetup->getSaveResultEnabled()) {
+        QString path = m_initSetup->getPathSaveResult();
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+        QString fileName = QString("result_%1.png").arg(timestamp);
+        QString fullPath = path + "/" + fileName;
+        if(pix.save(fullPath)) {
+            ui->log_text_edit->append(QString("Saved result image to: %1").arg(fullPath));
+        } else {
+            ui->log_text_edit->append(QString("Failed to save result image to: %1").arg(fullPath));
+        }
+    }
+
+    this->setEnabled(true);
+}
+
+/**
+ * @brief Captures and saves the current frame from the camera.
+ */
+void MatchingUI::on_btn_capture_clicked()
+{
+    if (camL && camL->isRunning()) {
+        camL->saveCurrentFrame();
+        ui->log_text_edit->append("Frame saved.");
+    } else {
+        ui->log_text_edit->append("Camera not running. Please connect the camera first.");
+    }
+}
+
+/**
+ * @brief Loads an image from a file.
+ */
+void MatchingUI::on_btn_loadImage_clicked()
+{
+    if (camL && camL->isRunning()) {
+        camL->Stop();
+    }
+
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Open Image"), "", tr("Image Files (*.png *.jpg *.bmp)"));
+    if (!fileName.isEmpty()) {
+        QPixmap pix(fileName);
+        lastpixmap = pix.copy();
+        mainPicturePanel->setImage(lastpixmap);
+        loadRois(lastpixmap.size());
+    }
+}
+
+/******************************************************************************
+ *                             CUSTOM WIDGET SLOTS                            *
+ ******************************************************************************/
+
+/**
+ * @brief Handles updates when templates are created or changed in the picture box.
+ * @param templates A map of template IDs to their data.
+ */
+void MatchingUI::onTemplatesChanged(const QMap<int, CustomPictureBox::TemplateData> &templates)
+{
+    ui->log_text_edit->append(QString("Template list updated. Count: %1").arg(templates.size()));
+    ui->lbl_display_1->clear();
+    ui->lbl_display_2->clear();
 
     if (templates.contains(0)) {
         m_template_pixmap1 = templates[0].image.copy();
         template_roi_1 = templates[0].roi;
         m_template_mat1 = QPixmapToCVMat(m_template_pixmap1);
         m_template_pixmap1.save("template_L.png");
-        ui->lbl_display_1->setPixmap(templates[0].image.scaled(
-            ui->lbl_display_1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        has_template = true;
-    }
-    else{
+        ui->lbl_display_1->setPixmap(templates[0].image.scaled(ui->lbl_display_1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
         m_template_mat1.release();
     }
+
     if (templates.contains(1)) {
         m_template_pixmap2 = templates[1].image.copy();
         template_roi_2 = templates[1].roi;
         m_template_mat2 = QPixmapToCVMat(m_template_pixmap2);
         m_template_pixmap2.save("template_R.png");
-        ui->lbl_display_2->setPixmap(templates[1].image.scaled(
-            ui->lbl_display_2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        has_template = true;
-    }
-    else {
+        ui->lbl_display_2->setPixmap(templates[1].image.scaled(ui->lbl_display_2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
         m_template_mat2.release();
-    }
-    if (has_template) {
-        setTrain(true);
     }
 }
 
+/**
+ * @brief Handles updates when ROIs are created or changed in the picture box.
+ * @param rois A map of ROI IDs to their data.
+ */
 void MatchingUI::onRoisChanged(const QMap<int, CustomPictureBox::TemplateData> &rois)
 {
     ui->log_text_edit->append(QString("ROI list updated. Count: %1").arg(rois.size()));
-    m_roi_rect1 = QRect();
-    m_roi_rect2 = QRect();
-    for (const auto& roiData : rois.values()) {
-        ui->log_text_edit->append(QString(" - ROI %1: [%2, %3, %4x%5]")
-                                    .arg(roiData.id + 1)
-                                    .arg(roiData.roi.x())
-                                    .arg(roiData.roi.y())
-                                    .arg(roiData.roi.width())
-                                    .arg(roiData.roi.height()));
-        if (roiData.id == 0) {
-            //ROIpx1 = roiData.image.copy();
-            //roi_rect_1 = roiData.roi;
-            m_roi_rect1 = roiData.roi;
-        }
-        if (roiData.id == 1) {
-            //ROIpx2 = roiData.image.copy();
-            //roi_rect_2 = roiData.roi;
-            m_roi_rect2 = roiData.roi;
-        }
-    }
-    // Save ROIs whenever they are changed
+    m_roi_rect1 = rois.value(0).roi;
+    m_roi_rect2 = rois.value(1).roi;
     saveRois(rois);
 }
 
+/******************************************************************************
+ *                                CAMERA SLOTS                                *
+ ******************************************************************************/
+
+/**
+ * @brief Receives a new frame from the camera thread and displays it.
+ * @param img The new frame as a QImage.
+ */
+void MatchingUI::update_QImage(QImage img) {
+    if (camL && camL->isRunning()) {
+        QPixmap pixmap = QPixmap::fromImage(img);
+        if(!pixmap.isNull()) {
+            mainPicturePanel->setImage(pixmap);
+        }
+        lastpixmap = pixmap.copy();
+        camL->frame_in_process = false;
+    }
+}
+
+/******************************************************************************
+ *                                  PLC SLOTS                                 *
+ ******************************************************************************/
+
+/**
+ * @brief Updates the internal PLC status variable.
+ * @param st The new status code from the PLC.
+ */
+void MatchingUI::UpdatePlcStatus(uint16_t st) {
+    plc_status_ = st;
+}
+
+/**
+ * @brief Updates the UI and internal state based on PLC connection status.
+ * @param state True if connected, false otherwise.
+ */
+void MatchingUI::UpdatePLCState(bool state)
+{
+    isconnectPLC = state;
+    if (state){
+        ui->btn_connect_plc->setStyleSheet("background-color: green");
+    } else {
+        ui->btn_connect_plc->setStyleSheet("");
+    }
+}
+
+/**
+ * @brief Prints log messages from the PLC to the UI.
+ * @param msg The log message.
+ */
+void MatchingUI::PrintPlcLogs(QString msg) {
+    ui->log_text_edit->append("[PLC] " + msg);
+}
+
+/**
+ * @brief Handles the alignment command from the PLC.
+ */
+void MatchingUI::ActionAlign() {
+    if (isconnectPLC && ui->cb_start->isChecked()) {
+        ui->log_text_edit->append("Start Alignment triggered by PLC.");
+        on_btn_connect_clicked();
+        SleepByQtimer(100);
+        on_btn_run_clicked();
+    }
+}
+
+/**
+ * @brief Safely stops the PLC thread.
+ */
+void MatchingUI::StopPlcThread(){
+    if (thread_plc_ && thread_plc_->isRunning()) {
+        thread_plc_->quit();
+        thread_plc_->wait();
+    }
+}
+
+/**
+ * @brief Signals the PLC that the CCD command is finished.
+ */
+void MatchingUI::FinishPlcCmd(){
+    emit signalPlcSetCCDTrig();
+    emit signalPlcSetStatus(_PLC_IDLE_);
+}
+
+/******************************************************************************
+ *                              CORE LOGIC & HELPERS                          *
+ ******************************************************************************/
+
+/**
+ * @brief Enables or disables UI controls for training mode.
+ * @param enabled True to enable, false to disable.
+ */
+void MatchingUI::setTrainMode(bool enabled){
+    ui->btn_train_data->setEnabled(enabled);
+    ui->btn_run->setEnabled(enabled);
+}
+
+/**
+ * @brief Enables or disables UI controls for setting mode.
+ * @param enabled True to enable, false to disable.
+ */
+void MatchingUI::setSettingMode(bool enabled){
+    ui->btn_train_data->setEnabled(!enabled);
+    ui->btn_run->setEnabled(!enabled);
+}
+
+/**
+ * @brief Saves the current ROI definitions to an XML file.
+ * @param rois A map of ROI IDs to their data.
+ */
 void MatchingUI::saveRois(const QMap<int, CustomPictureBox::TemplateData> &rois)
 {
-    QSize imageSize = mainPictureBox->getOriginalImageSize();
+    QSize imageSize = getPictureBox() ? getPictureBox()->getOriginalImageSize() : QSize();
     if (imageSize.isEmpty()) {
         qDebug() << "Cannot save ROIs, original image size is invalid.";
         return;
     }
 
-    QString roiFilePath = "rois.xml";
+    QString roiFilePath = m_initSetup->getPathSaveRoi();
     QFile file(roiFilePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qDebug() << "Could not open ROI file for writing:" << roiFilePath;
@@ -337,30 +728,30 @@ void MatchingUI::saveRois(const QMap<int, CustomPictureBox::TemplateData> &rois)
     for (const auto& roiData : rois.values()) {
         xml.writeStartElement("roi");
         xml.writeAttribute("id", QString::number(roiData.id));
-
         double relX = (double)roiData.roi.x() / imageSize.width();
         double relY = (double)roiData.roi.y() / imageSize.height();
         double relW = (double)roiData.roi.width() / imageSize.width();
         double relH = (double)roiData.roi.height() / imageSize.height();
-
         xml.writeAttribute("x", QString::number(relX, 'f', 6));
         xml.writeAttribute("y", QString::number(relY, 'f', 6));
         xml.writeAttribute("w", QString::number(relW, 'f', 6));
         xml.writeAttribute("h", QString::number(relH, 'f', 6));
-
         xml.writeEndElement(); // roi
     }
 
     xml.writeEndElement(); // rois
     xml.writeEndDocument();
-
     file.close();
 }
 
+/**
+ * @brief Loads ROI definitions from an XML file.
+ * @param imageSize The current size of the image to scale the ROIs to.
+ */
 void MatchingUI::loadRois(const QSize &imageSize)
 {
     QMap<int, CustomPictureBox::TemplateData> loadedRois;
-    QString roiFilePath = "rois.xml";
+    QString roiFilePath = m_initSetup->getPathSaveRoi();
     QFile file(roiFilePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         qDebug() << "Could not open ROI file for reading:" << roiFilePath;
@@ -369,361 +760,40 @@ void MatchingUI::loadRois(const QSize &imageSize)
 
     QXmlStreamReader xml(&file);
     while (!xml.atEnd() && !xml.hasError()) {
-        QXmlStreamReader::TokenType token = xml.readNext();
-        if (token == QXmlStreamReader::StartElement) {
-            if (xml.name().toString() == "roi") {
-                int id = xml.attributes().value("id").toInt();
-                double relX = xml.attributes().value("x").toDouble();
-                double relY = xml.attributes().value("y").toDouble();
-                double relW = xml.attributes().value("w").toDouble();
-                double relH = xml.attributes().value("h").toDouble();
+        if (xml.readNext() == QXmlStreamReader::StartElement && xml.name().toString() == "roi") {
+            int id = xml.attributes().value("id").toInt();
+            double relX = xml.attributes().value("x").toDouble();
+            double relY = xml.attributes().value("y").toDouble();
+            double relW = xml.attributes().value("w").toDouble();
+            double relH = xml.attributes().value("h").toDouble();
 
-                QRect roiRect(
-                    qRound(relX * imageSize.width()),
-                    qRound(relY * imageSize.height()),
-                    qRound(relW * imageSize.width()),
-                    qRound(relH * imageSize.height())
-                );
+            QRect roiRect(qRound(relX * imageSize.width()), qRound(relY * imageSize.height()),
+                          qRound(relW * imageSize.width()), qRound(relH * imageSize.height()));
 
-                CustomPictureBox::TemplateData data;
-                data.id = id;
-                data.roi = roiRect;
-                data.name = QString("ROI %1").arg(id + 1);
-
-                loadedRois[id] = data;
-            }
+            CustomPictureBox::TemplateData data;
+            data.id = id;
+            data.roi = roiRect;
+            data.name = QString("ROI %1").arg(id + 1);
+            loadedRois[id] = data;
         }
     }
 
     if (xml.hasError()) {
         qDebug() << "XML error while reading ROIs:" << xml.errorString();
-    }
-
-    if (!loadedRois.isEmpty()) {
-        mainPictureBox->setRois(loadedRois);
+    } else if (!loadedRois.isEmpty() && getPictureBox()) {
+        getPictureBox()->setRois(loadedRois);
+        mainPicturePanel->updateTable();
         ui->log_text_edit->append("Loaded ROIs from " + roiFilePath);
     }
+    file.close();
 }
 
-void MatchingUI::on_btn_connect_clicked()
-{
-    try {
-        mutex_shared = new QMutex();
-        camL->mutex_shared = mutex_shared;
-        camL->Play();
-        setCapture(true);
-        ui->statusBar->showMessage("Connect Camera", 5000);
-    }
-    catch (const std::exception& e) {
-        qDebug() << "Error in on_btn_connect_clicked:" << e.what();
-    }
-}
-
-void MatchingUI::update_image_mat(cv::Mat img) {
-    if (camL->isRunning()){
-        QImage qimg = QImage((const uchar*)img.data, img.cols, img.rows, img.step, QImage::Format_RGB888).rgbSwapped();
-    //    if(!qimg.isNull()) {
-    //        mainPictureBox->setImage(QPixmap::fromImage(qimg));
-    //    }
-
-        QPixmap pixmap = QPixmap::fromImage(qimg);
-        if(!pixmap.isNull()) {
-            mainPictureBox->setImage(pixmap);
-    //        loadRois(pixmap.size());
-        }
-
-        lastpixmap = pixmap.copy();
-    }
-
-}
-
-void MatchingUI::update_QImage(QImage img) {
-    if (camL->isRunning()) {
-        QPixmap pixmap = QPixmap::fromImage(img);
-        if(!pixmap.isNull()) {
-            mainPictureBox->setImage(pixmap);
-        }
-        lastpixmap = pixmap.copy();
-        camL->frame_in_process = false;
-    }
-}
-
-void MatchingUI::setTrain(const bool &train){
-    ui->btn_train_data->setEnabled(train);
-    ui->btn_run->setEnabled(train);
-}
-
-void MatchingUI::setSetting(const bool &setting){
-    ui->btn_train_data->setEnabled(!setting);
-    ui->btn_run->setEnabled(!setting);
-}
-
-void MatchingUI::setCapture(const bool &capture){
-    ui->btn_connect->setEnabled(!capture);
-    //ui->btn_load_img->setEnabled(capture);
-    setTrain(ui->actionTrain->isChecked());
-}
-
-void MatchingUI::on_btn_train_data_clicked()
-{
-    this->setEnabled(false);
-    ui->log_text_edit->append("Starting training process...");
-    QCoreApplication::processEvents();
-
-    // Store the template ROIs right before training and save them
-    if (!m_template_mat1.empty()) {
-        m_trained_template_roi1 = template_roi_1;
-    }
-    if (!m_template_mat2.empty()) {
-        m_trained_template_roi2 = template_roi_2;
-    }
-    saveTemplatesInfo();
-
-    bool trained_something = false;
-    float total_time_exec = 0;
-
-    ui->log_text_edit->append("Processing Template 1 ...");
-    QCoreApplication::processEvents();
-    float time1 = m_container1.Train(m_template_mat1);
-    if (time1 > 0) {
-        ui->log_text_edit->append(QString("Template1 trained/loaded successfully in %1 ms").arg(time1 * 1000, 0, 'f', 1));
-        QPixmap pix = QPixmap::fromImage(QImage(m_container1.GetTrainedTemplateImg().data,
-                                                m_container1.GetTrainedTemplateImg().cols,
-                                                m_container1.GetTrainedTemplateImg().rows,
-                                                m_container1.GetTrainedTemplateImg().step,
-                                                QImage::Format_RGB888).rgbSwapped());
-        if (!pix.isNull()) {
-            ui->lbl_display_1->setPixmap(pix.scaled(ui->lbl_display_1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        }
-        trained_something = true;
-        total_time_exec += time1;
-    } else {
-        ui->log_text_edit->append("Failed to train/ load data from Template 1");
-    }
-
-    // Train Template 2
-    ui->log_text_edit->append("Processing Template 2 ...");
-    QCoreApplication::processEvents();
-    float time2 = m_container2.Train(m_template_mat2);
-    if (time2 > 0) {
-        ui->log_text_edit->append(QString("Template2 trained/loaded successfully in %1 ms").arg(time2 * 1000, 0, 'f', 1));
-        QPixmap pix = QPixmap::fromImage(QImage(m_container2.GetTrainedTemplateImg().data,
-                                                m_container2.GetTrainedTemplateImg().cols,
-                                                m_container2.GetTrainedTemplateImg().rows,
-                                                m_container2.GetTrainedTemplateImg().step,
-                                                QImage::Format_RGB888).rgbSwapped());
-        if (!pix.isNull()) {
-            ui->lbl_display_2->setPixmap(pix.scaled(ui->lbl_display_2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        }
-        trained_something = true;
-        total_time_exec += time2;
-    } else {
-        ui->log_text_edit->append("Failed to train/ load data from Template 2");
-    }
-
-    ui->log_text_edit->append(QString("Total execution time: %1 ms").arg(total_time_exec * 1000, 0, 'f', 1));
-    //Check if both models are ready
-    ui->log_text_edit->append(QString("Total execution time: %1 ms").arg(total_time_exec * 1000, 0, 'f', 1));
-
-    // if (m_container1.IsTrainedOK() && m_container2.IsTrainedOK()) {
-    //     ui->log_text_edit->append("Both models are ready for testing");
-    //     setTrain(false);
-    // } else {
-    //     ui->log_text_edit->append("One or both models are not ready. Please define templates and train again.");
-    //     setTrain(true);
-    // }
-
-    this->setEnabled(true);
-    ui->log_text_edit->append("Training process finished");
-
-}
-
-void MatchingUI::on_btn_run_clicked()
-{
-    if (mainPictureBox->getOriginalImageSize().isEmpty()) {
-        ui->log_text_edit->append("[ERROR] No image load to run test on");
-        return;
-    }
-    if (m_roi_rect1.isNull() && m_roi_rect2.isNull()) {
-        ui->log_text_edit->append("[ERROR] No ROIs defined for tesing.");
-        return;
-    }
-    mainPictureBox->setImage(lastpixmap);
-    ui->log_text_edit->append("Running inference...");
-    QCoreApplication::processEvents();
-
-    this->setEnabled(false);
-    cv::Mat source_mat = QPixmapToCVMat(lastpixmap);
-    cv::Mat display_mat = source_mat.clone();
-    // cv::Mat src_roi1 = source_mat(cv::Rect(m_roi_rect1.x(), m_roi_rect1.y(), m_roi_rect1.width(), m_roi_rect1.height()));
-    // cv::Mat src_roi2 = source_mat(cv::Rect(m_roi_rect2.x(), m_roi_rect2.y(), m_roi_rect2.width(), m_roi_rect2.height()));
-    float time1 = 0;
-    float time2 = 0;
-    //Test ROI1
-    // Test ROI1
-    cv::Mat src_roi1 = source_mat(cv::Rect(m_roi_rect1.x(), m_roi_rect1.y(), m_roi_rect1.width(), m_roi_rect1.height()));
-    time1 = m_container1.Test(src_roi1);
-    std::vector<cv::Point> result1 = m_container1.GetResult();
-
-    // Test ROI2
-    cv::Mat src_roi2 = source_mat(cv::Rect(m_roi_rect2.x(), m_roi_rect2.y(), m_roi_rect2.width(), m_roi_rect2.height()));
-    time2 = m_container2.Test(src_roi2);
-    std::vector<cv::Point> result2 = m_container2.GetResult();
-
-    // --- Process and draw results ---
-    bool result1_ok = !result1.empty();
-    bool result2_ok = !result2.empty();
-
-    if (result1_ok) {
-        drawResult(display_mat, result1, m_roi_rect1);
-    }
-    if (result2_ok) {
-        drawResult(display_mat, result2, m_roi_rect2);
-    }
-
-    if (!result1_ok || !result2_ok) {
-        ui->log_text_edit->append("Cannot detect 1 or 2 object");
-        emit signalPlcWriteResult(0, 0, 0, 2, PlcWriteMode::kOthers);
-    } else {
-        ui->log_text_edit->append("Analysis the result ....");
-        cv::Point center1 = result1.at(0);
-        cv::Point center2 = result2.at(0);
-        QPoint trained_center1 = m_trained_template_roi1.center();
-        QPoint trained_center2 = m_trained_template_roi2.center();
-        QPoint trained_center = QPoint((trained_center1.x() + trained_center2.x()) / 2.0f, (trained_center1.y() + trained_center2.y()) / 2.0f);
-
-        // Calculate the center of the found object
-        QPoint found_center1(center1.x + m_roi_rect1.x(), center1.y + m_roi_rect1.y());
-        QPoint found_center2(center2.x + m_roi_rect2.x(), center2.y + m_roi_rect2.y());
-        QPoint found_center = QPoint((found_center1.x() + found_center2.x()) / 2.0f, (found_center1.y() + found_center2.y()) / 2.0f);
-
-
-        QPoint delta = found_center - trained_center;
-        float avg_dx = delta.x();
-        float avg_dy = delta.y();
-
-        float angle_rad = atan2(found_center1.y() - found_center2.y(), found_center1.x() - found_center2.x());
-        float avg_angle_dev = (angle_rad + M_PI/2.0) * 180.0 / M_PI;
-        
-        ui->log_text_edit->append(QString(">> mean Transit: (dx: %1, dy: %2)").arg(avg_dx, 0, 'f', 2).arg(avg_dy, 0, 'f', 2));
-        ui->log_text_edit->append(QString(">> Average deviation angle: %1 dgree").arg(avg_angle_dev, 0, 'f', 2));
-        QCoreApplication::processEvents();
-        // Draw the avg result
-        
-        cv::Point avg_trained_center_cv(trained_center.x(), trained_center.y());
-
-        // Draw arrow
-        cv::Point offset_dest_point_cv(avg_trained_center_cv.x + avg_dx,
-                                       avg_trained_center_cv.y + avg_dy);
-        cv::arrowedLine(display_mat, avg_trained_center_cv, offset_dest_point_cv, cv::Scalar(0, 255, 0), 10, cv::LINE_AA);
-
-        cv::line(display_mat, cv::Point(offset_dest_point_cv.x - 30, offset_dest_point_cv.y), cv::Point(offset_dest_point_cv.x + 30, offset_dest_point_cv.y), cv::Scalar(255, 0, 0), 10);
-        cv::line(display_mat, cv::Point(offset_dest_point_cv.x, offset_dest_point_cv.y - 30), cv::Point(offset_dest_point_cv.x, offset_dest_point_cv.y + 30), cv::Scalar(255, 0, 0), 10);
-
-        // float final_angle_rad = (-M_PI/2.0) + (avg_angle_dev * M_PI / 180.0);
-        // int line_length = 100;
-        // cv::Point angle_dest_point_cv(
-        //             offset_dest_point_cv.x + line_length * std::cos(final_angle_rad),
-        //             offset_dest_point_cv.y + line_length + std::sin(final_angle_rad));
-        //cv::line(display_mat, offset_dest_point_cv, angle_dest_point_cv, cv::Scalar(128, 255, 255), 10, cv::LINE_AA);
-        
-        if(ui->actionTrain->isChecked()){
-            m_trained_angle = avg_angle_dev;
-            ui->lbl_ref_c1->setText(QString("%1-%2").arg(m_trained_template_roi1.center().x()).arg(m_trained_template_roi1.center().y()));
-            ui->lbl_ref_c2->setText(QString("%1-%2").arg(m_trained_template_roi2.center().x()).arg(m_trained_template_roi2.center().y()));
-            ui->lbl_ref_p->setText(QString("%1-%2").arg((m_trained_template_roi1.center().x() + m_trained_template_roi2.center().x())/2.0f).arg((m_trained_template_roi1.center().y() + m_trained_template_roi2.center().y())/2.0f));
-            ui->lbl_ref_a->setText(QString("%1").arg(m_trained_angle, 0, 'f', 2));
-            saveTemplatesInfo();
-        }
-        else {
-            ui->lbl_test_c1->setText(QString("%1-%2").arg(found_center1.x()).arg(found_center1.y()));
-            ui->lbl_test_c2->setText(QString("%1-%2").arg(found_center2.x()).arg(found_center2.y()));
-            ui->lbl_test_p->setText(QString("%1-%2").arg((found_center1.x() + found_center2.x())/2.0f, 0, 'f', 2).arg((found_center1.y() + found_center2.y())/2.0f, 0, 'f', 2));
-            ui->lbl_test_a->setText(QString("%1").arg(avg_angle_dev, 0, 'f', 2));
-            float delta_angle = m_trained_angle - avg_angle_dev;
-
-            AlignmentResult alignRes = Alignment::compute(trained_center, found_center, delta_angle, focusx, focusy, a);
-            float avg_dx = alignRes.dx_robot;
-            float avg_dy = alignRes.dy_robot;
-            delta_angle = alignRes.angle_deg;
-
-            ui->lbl_offsetX->setText(QString("%1").arg(avg_dx, 0, 'f', 2));
-            ui->lbl_offsetY->setText(QString("%1").arg(avg_dy, 0, 'f', 2));
-            
-            ui->lbl_offsetAngle->setText(QString("%1").arg(delta_angle, 0, 'f', 2));
-
-
-            if (isconnectPLC) {
-                int32_t int_dx = 0, int_dy=0, int_dev = 0;
-                int_dx = (int32_t)avg_dx;
-                int_dy = (int32_t)avg_dy;
-                int_dev = (int32_t)avg_angle_dev;
-                emit signalPlcWriteResult(avg_dx*100, avg_dy*100, delta_angle*100, 1, PlcWriteMode::kOthers);
-    //            emit signalPlcWriteResult(int_dx, int_dy, int_dev, 1, PlcWriteMode::kPulMovUVW);
-            }
-        }
-
-    }
-    ui->log_text_edit->append(QString("Inference Time: %1 ms").arg((time1 + time2)* 1000, 0, 'f', 2));
-
-    QPixmap pix = QPixmap::fromImage(QImage(display_mat.data, display_mat.cols, display_mat.rows, display_mat.step, QImage::Format_RGB888).rgbSwapped());
-    mainPictureBox->setImage(pix);
-    //emit signalPlcWriteResult(avg_dx, avg_dy, avg_angle_dev, 1, PlcWriteMode::kOthers);
-
-    this->setEnabled(true);
-    ui->btn_connect->setEnabled(true);
-
-}
-
-void MatchingUI::drawResult(cv::Mat &image, const std::vector<cv::Point> &points, const QRect &roi)
-{
-    if (points.empty()) return;
-
-    std::vector<cv::Point> global_points;
-    for(const auto& pt : points) {
-        global_points.push_back(cv::Point(pt.x + roi.x(), pt.y + roi.y()));
-    }
-
-    // Draw using the same logic as before
-    //cv::circle(image, global_points.at(0), 5, cv::Scalar(0, 0, 255), -1);
-    // Draw center cross
-    MatchingMode mode = m_container1.GetMode();
-    switch(mode){
-    case MatchingMode::CHAMFER:
-    {
-        cv::line(image, global_points.at(0), global_points.at(1), cv::Scalar(0, 255, 0), 5);
-        cv::line(image, cv::Point(global_points.at(0).x - 30, global_points.at(0).y), cv::Point(global_points.at(0).x + 30, global_points.at(0).y), cv::Scalar(255, 0, 0), 5);
-        cv::line(image, cv::Point(global_points.at(0).x, global_points.at(0).y - 30), cv::Point(global_points.at(0).x, global_points.at(0).y + 30), cv::Scalar(255, 0, 0), 5);
-        if (global_points.size() >= 6) { // Ensure there are enough points for the rectangle
-            cv::line(image, global_points.at(2), global_points.at(3), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(3), global_points.at(4), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(4), global_points.at(5), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(5), global_points.at(2), cv::Scalar(0, 255, 255), 5);
-        }
-        break;
-    }
-    case MatchingMode::FASTRST: {
-        cv::line(image, cv::Point(global_points.at(0).x - 30, global_points.at(0).y), cv::Point(global_points.at(0).x + 30, global_points.at(0).y), cv::Scalar(255, 0, 0), 5);
-        cv::line(image, cv::Point(global_points.at(0).x, global_points.at(0).y - 30), cv::Point(global_points.at(0).x, global_points.at(0).y + 30), cv::Scalar(255, 0, 0), 5);
-        if (global_points.size() >= 6) { // Ensure there are enough points for the rectangle
-            //cv::line(image, global_points.at(1), global_points.at(2), cv::Scalar(0, 255, 255), 5);
-            //cv::line(image, global_points.at(2), global_points.at(4), cv::Scalar(0, 255, 255), 5);
-            //cv::line(image, global_points.at(4), global_points.at(3), cv::Scalar(0, 255, 255), 5);
-            //cv::line(image, global_points.at(3), global_points.at(1), cv::Scalar(0, 255, 255), 5);
-			cv::line(image, global_points.at(1), global_points.at(2), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(2), global_points.at(3), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(3), global_points.at(4), cv::Scalar(0, 255, 255), 5);
-            cv::line(image, global_points.at(4), global_points.at(1), cv::Scalar(0, 255, 255), 5);
-        }
-        break;
-    }
-    }
-
-}
-
+/**
+ * @brief Saves the trained template information (ROIs, angle) to an XML file.
+ */
 void MatchingUI::saveTemplatesInfo()
 {
-    QString path = "templates.xml";
+    QString path = m_initSetup->getPathSaveTemplate();
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         qDebug() << "Could not open templates file for writing:" << path;
@@ -759,16 +829,18 @@ void MatchingUI::saveTemplatesInfo()
     xml.writeAttribute("angle", QString::number(m_trained_angle));
     xml.writeEndElement();
 
-
     xml.writeEndElement(); // templates
     xml.writeEndDocument();
     file.close();
-    ui->log_text_edit->append("Saved template positions to " + path);
+    ui->log_text_edit->append("Saved template info to " + path);
 }
 
+/**
+ * @brief Loads the trained template information from an XML file.
+ */
 void MatchingUI::loadTemplatesInfo()
 {
-    QString path = "templates.xml";
+    QString path = m_initSetup->getPathSaveTemplate();
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         qDebug() << "Could not open templates file for reading:" << path;
@@ -777,20 +849,15 @@ void MatchingUI::loadTemplatesInfo()
 
     QXmlStreamReader xml(&file);
     while (!xml.atEnd() && !xml.hasError()) {
-        QXmlStreamReader::TokenType token = xml.readNext();
-        if (token == QXmlStreamReader::StartElement) {
+        if (xml.readNext() == QXmlStreamReader::StartElement) {
             if (xml.name().toString() == "template") {
                 int id = xml.attributes().value("id").toInt();
                 int x = xml.attributes().value("x").toInt();
                 int y = xml.attributes().value("y").toInt();
                 int w = xml.attributes().value("w").toInt();
                 int h = xml.attributes().value("h").toInt();
-
-                if (id == 0) {
-                    m_trained_template_roi1.setRect(x, y, w, h);
-                } else if (id == 1) {
-                    m_trained_template_roi2.setRect(x, y, w, h);
-                }
+                if (id == 0) m_trained_template_roi1.setRect(x, y, w, h);
+                else if (id == 1) m_trained_template_roi2.setRect(x, y, w, h);
             } else if (xml.name().toString() == "angle") {
                 m_trained_angle = xml.attributes().value("angle").toFloat();
             }
@@ -800,79 +867,64 @@ void MatchingUI::loadTemplatesInfo()
     if (xml.hasError()) {
         qDebug() << "XML error while reading templates:" << xml.errorString();
     } else {
-        if (!m_trained_template_roi1.isNull() || !m_trained_template_roi2.isNull())
-            ui->log_text_edit->append("Loaded template positions from " + path);
+        ui->log_text_edit->append("Loaded template info from " + path);
     }
     file.close();
 }
 
-void MatchingUI::on_btn_connect_plc_clicked()
+/**
+ * @brief Draws the matching result on the display image.
+ * @param image The image to draw on.
+ * @param points The result points from the matching algorithm.
+ * @param roi The ROI where the matching was performed.
+ */
+void MatchingUI::drawResult(cv::Mat &image, const std::vector<cv::Point> &points, const QRect &roi)
 {
-    // Add PLC connection logic here
-//    QString szIp = ui->le_ip->text();
-//    int szPort = (ui->le_port->text()).toInt();
-    // QString szRack = ui->le_rack->text();
-    // QString szSlot = ui->le_slot->text();
-    // QString szName = ui->le_plc_name->text();
-    // QString szPassword = ui->le_plc_password->text();
-    
-    //connector_plc_->SetPlcIpPort(szIp, szPort);
+    if (points.empty()) return;
 
-//    m_plc_thread->start();
-    thread_plc_->start();
-    emit signalPlcInit();
+    std::vector<cv::Point> global_points;
+    for(const auto& pt : points) {
+        global_points.push_back(cv::Point(pt.x + roi.x(), pt.y + roi.y()));
+    }
+
+    MatchingMode mode = m_container1.GetMode();
+    switch(mode){
+    case MatchingMode::CHAMFER:
+        // Draw center cross
+        cv::line(image, cv::Point(global_points[0].x - 30, global_points[0].y), cv::Point(global_points[0].x + 30, global_points[0].y), cv::Scalar(255, 0, 0), 5);
+        cv::line(image, cv::Point(global_points[0].x, global_points[0].y - 30), cv::Point(global_points[0].x, global_points[0].y + 30), cv::Scalar(255, 0, 0), 5);
+        cv::line(image, cv::Point(global_points[0].x, global_points[0].y), cv::Point(global_points[1].x, global_points[1].y), cv::Scalar(255, 255, 0), 5);
+        // Draw bounding box
+        if (global_points.size() >= 6) {
+            for (size_t i = 2; i < 6; ++i) {
+                cv::line(image, global_points[i], global_points[i % 5 + i / 5 + 1], cv::Scalar(0, 255, 255), 5);
+            }
+        }
+        break;
+    case MatchingMode::FASTRST:
+        // Draw center cross
+        cv::line(image, cv::Point(global_points[0].x - 30, global_points[0].y), cv::Point(global_points[0].x + 30, global_points[0].y), cv::Scalar(255, 0, 0), 5);
+        cv::line(image, cv::Point(global_points[0].x, global_points[0].y - 30), cv::Point(global_points[0].x, global_points[0].y + 30), cv::Scalar(255, 0, 0), 5);
+        // Draw bounding box
+        cv::line(image, cv::Point(global_points[0].x, global_points[0].y), cv::Point(global_points[1].x, global_points[1].y), cv::Scalar(255, 255, 0), 5);
+        if (global_points.size() >= 6) {
+            for (size_t i = 2; i < 6; ++i) {
+                cv::line(image, global_points[i], global_points[i % 5 + i / 5 + 1], cv::Scalar(0, 255, 255), 5);
+            }
+        }
+        break;
+    default:
+        break;
+    }
 }
 
-void MatchingUI::UpdatePLCState(bool state)
-{
-    isconnectPLC = state;
-    if (state){
-        ui->btn_connect_plc->setStyleSheet("background-color: green");
-    }
-    else {
-        ui->btn_connect_plc->setStyleSheet("background-color: rgb(52, 67, 104);color: rgb(255, 0, 0);");
-    }
-}
-void MatchingUI::ActionAlign() {
-    if (isconnectPLC && ui->cb_start->isChecked()) {
-        ui->log_text_edit->append("Start Alignment");
-        on_btn_connect_clicked();
-        SleepByQtimer(100);
-        on_btn_load_img_clicked();
-        SleepByQtimer(100);
-        on_btn_run_clicked();
-        //std::cout << "Start Alignment" << std::endl;
-    }
-    return;
-}
-
+/**
+ * @brief Pauses execution for a specified duration without freezing the UI.
+ * @param timeout_ms The duration to sleep in milliseconds.
+ */
 void MatchingUI::SleepByQtimer(unsigned int timeout_ms)
 {
-    bool isTimeup = false;
-    QTimer *timer = new QTimer(this);
-    timer->setSingleShot(true);
-    timer->setInterval(timeout_ms);
-
-    QObject::connect(timer, &QTimer::timeout, [&isTimeup, &timer]() {
-        isTimeup = true;
-    } );
-    timer->start();
-    while (!isTimeup){
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-    }
-
-    timer->deleteLater();
-    return;
-}
-
-void MatchingUI::on_btn_send_clicked()
-{
-    QString adrress = ui->le_address->text();
-    int32_t value1 = ui->le_value->text().toInt();
-    int32_t value2 = ui->le_type_plc->text().toInt();
-    int32_t value3 = ui->le_plc_status->text().toInt();
-    emit signalPlcWriteResult(value1, value2, value3, 1, PlcWriteMode::kOthers);
-
-    //connector_plc_->WriteResult(value1, value2, value3, 1, PlcWriteMode::kOthers);
-
+    QEventLoop loop;
+    QTimer::singleShot(timeout_ms, &loop, &QEventLoop::quit);
+    loop.exec();
 }

@@ -161,7 +161,7 @@ float MatchingContainer::Train(const cv::Mat &template_img) {
                 }
                 {
                     auto start = std::chrono::steady_clock::now();
-                    m_rst.trainTemplate(gray);
+                    m_rst.trainTemplate(template_gray);
                     m_rst.saveTrain("");
                     auto end = std::chrono::steady_clock::now();
                     auto duration = end - start;
