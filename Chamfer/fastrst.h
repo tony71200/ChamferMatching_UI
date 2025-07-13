@@ -222,7 +222,7 @@ public:
     int m_iMaxPos = 1;
     double m_dMaxOverlap;
     double m_dScore = 0.75;
-    double m_dToleranceAngle = 180;
+    double m_dToleranceAngle = 20;
     int m_iMinReduceArea = 256;
     int m_iMessageCount;
 

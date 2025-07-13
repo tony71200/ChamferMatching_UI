@@ -262,6 +262,8 @@ public slots:
 
     int GetPLCFormat() const { return (int)format_PLC_; }
     void GetPLCStatus() { emit signalStatus(this->st_plc_); }
+    QString GetIP() const {return ip_;}
+    int GetPort() const {return port_;}
 
     bool LoadSettingfromFile();
     bool LoadSettingFromBackupFile();   // Jimmy 20240409

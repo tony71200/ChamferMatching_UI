@@ -4,7 +4,8 @@
 #
 #-------------------------------------------------
 
-QT       += core gui network xml
+QT       += core gui network xml widgets
+QT       += concurrent
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -112,7 +113,9 @@ SOURCES += \
     FileIO/fileiomanager.cpp \
     Chamfer/fastrst.cpp \
     PLCComm/PoseTransformer.cpp\
-    Camera/Alignment.cpp
+    Camera/Alignment.cpp \
+    custompicturepanel.cpp \
+    Utils/initsetup.cpp
 
 
 HEADERS += \
@@ -135,7 +138,11 @@ HEADERS += \
     FileIO/fileiomanager.h \
     Chamfer/fastrst.h \
     PLCComm/PoseTransformer.h\
-    Camera/Alignment.h
+    Camera/Alignment.h \
+	robotposetrans.h \
+    FileIO/json.hpp \
+    custompicturepanel.h \
+    Utils/initsetup.h
 
 
 FORMS += \
@@ -227,3 +234,20 @@ unix {
 CUDA_SOURCES += \
     Chamfer/chamfermatch.cu \
     Chamfer/controlcudamemory.cu
+
+DISTFILES += \
+    CameraCalibration.json \
+	T_base_cam.xml
+
+win32 {
+    for(FILE, DISTFILES) {
+        win_copy = $$quote(cmd /c copy /Y $$PWD\\$$FILE $$OUT_PWD\\$$FILE)
+        QMAKE_POST_LINK += $$win_copy $$escape_expand(\n\t)
+    }
+}
+unix {
+    for(FILE, DISTFILES) {
+        cpmp = $$quote(cp $$PWD/$$FILE $$OUT_PWD/$$FILE)
+        QMAKE_POST_LINK += $$cpmp $$escape_expand(\n\t)
+    }
+}

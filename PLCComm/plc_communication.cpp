@@ -7,37 +7,57 @@ PLC_Communication::PLC_Communication()
 
 bool PLC_Communication::plc_connection(QString &ip, int &port)
 {
-    try{
-        int timeout = 1000;
+    // [OPTIMIZED] Add robust error handling, logging, and return value
+    int timeout = 1000;
+    try {
+        if (!m_socket) {
+            qWarning() << "[PLC] Socket is null!";
+            is_connected = false;
+            return false;
+        }
         m_socket->connectToHost(ip, port);
-        if(m_socket->waitForConnected(timeout)){
-            qDebug() << "PLC is connected";
+        if (m_socket->waitForConnected(timeout)) {
+            qInfo() << "[PLC] Connected to" << ip << ":" << port;
             is_connected = true;
+            return true;
+        } else {
+            qWarning() << "[PLC] Connection failed:" << m_socket->errorString();
+            is_connected = false;
+            return false;
         }
-        else{
-            qDebug() << "PLC connects failed: " << m_socket->errorString();
-        }
-    }
-    catch(...){
-
+    } catch (const std::exception& e) {
+        qCritical() << "[PLC] Exception in plc_connection:" << e.what();
+        is_connected = false;
+        return false;
+    } catch (...) {
+        qCritical() << "[PLC] Unknown exception in plc_connection.";
+        is_connected = false;
+        return false;
     }
 }
 
 void PLC_Communication::plc_disconnect()
 {
-    m_socket->disconnectFromHost();
-    is_connected = false;
+    // [OPTIMIZED] Add null check and log
+    if (m_socket) {
+        m_socket->disconnectFromHost();
+        is_connected = false;
+        qInfo() << "[PLC] Disconnected from host.";
+    } else {
+        qWarning() << "[PLC] Attempted disconnect with null socket.";
+    }
 }
 
-bool PLC_Communication::wait_for_PLC_ready(unsigned int timeout=3000)
+bool PLC_Communication::wait_for_PLC_ready(unsigned int timeout = 3000)
 {
-    // Wait for PLC ready. If Ready return true; return false until timeout(ms).
-    clock_t endwait;
-    endwait = clock() + timeout * CLOCKS_PER_SEC;
-    while (clock() < endwait){
-        if (is_ready()){ return true;}
+    // [OPTIMIZED] Use QElapsedTimer for accurate timeout, avoid busy-wait
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < (int)timeout) {
+        if (is_ready()) return true;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
     }
+    qWarning() << "[PLC] wait_for_PLC_ready timeout after" << timeout << "ms.";
     return false;
 }
 
@@ -61,12 +81,16 @@ void PLC_Communication::CMD_read_from_PLC(uint16_t mode, QString block_addr)
     };
 
     try{
+        // [OPTIMIZED] Validate input and clear previous state
+        if (block_addr.isEmpty()) {
+            qWarning() << "[PLC] CMD_read_from_PLC: block_addr is empty!";
+            return;
+        }
         // Separate "Memory Block (eng. char.)" and "Address (digit)"
         for(int i=0; i<block_addr.length(); i++){
             if((block_addr[i] >= 'a' && block_addr[i] <= 'z') ||
                (block_addr[i] >= 'A' && block_addr[i] <= 'Z'))
                 block.append(block_addr[i]);
-
             if(block_addr[i] >= '0' && block_addr[i] <= '9')
                 addr_tmp.append(block_addr[i]);
         }
@@ -74,8 +98,6 @@ void PLC_Communication::CMD_read_from_PLC(uint16_t mode, QString block_addr)
         m_plc_status = mode;
 
         if(m_format_PLC == _PLC_Format_::_PLC_Format_ASCII_){
-            //#define READ_D5080 "5000 00FF 03FF 00 0018 000A 0401 0000 D* 005080 0001"
-            //#define READ_D5000 "5000 00FF 03FF 00 0018 000A 0401 0000 D* 005000 0001"
             str_send = "500000FF03FF000018000A04010000";
             str_send.append(block);
             str_send.append("*");
@@ -83,16 +105,13 @@ void PLC_Communication::CMD_read_from_PLC(uint16_t mode, QString block_addr)
             str_send.append("0001");
         }
         else if(m_format_PLC == _PLC_Format_::_PLC_Format_Binary_){
-            // Address
             QString addr_conv = convert_dec_to_hex(addr.toInt(), 6);
-            unsigned char temp[3];
+            unsigned char temp[3] = {0};
             for(int i=0; i<addr_conv.size();i+=2)
                 temp[i/2] = (addr_conv.mid(i,2).toInt(nullptr, 16)) & 0xff;
-
             read_cmd[15] = temp[0];
             read_cmd[16] = temp[1];
             read_cmd[17] = temp[2];
-
             // Memory block
             if (block == "D")
                 read_cmd[18] = 0xA8;
@@ -112,35 +131,30 @@ void PLC_Communication::CMD_read_from_PLC(uint16_t mode, QString block_addr)
                 read_cmd[18] = 0x93;
             else if (block == "V")
                 read_cmd[18] = 0x94;
-//#ifdef SYNC_TIME_FROM_PLC
-//            if (st_plc_ == _PLC_READ_CURRENT_TIME_)
-//                read_cmd[19] = 0x06;
-//#endif
         }
 
         if(is_connected && wait_for_PLC_ready(_WAIT_TIME_OUT_)){
             wait_lock();
             qint64 write_result = 0;
-
             if(m_format_PLC == _PLC_Format_::_PLC_Format_ASCII_){
                 write_result = m_socket->write(str_send.toLatin1());
             }
             else if(m_format_PLC == _PLC_Format_::_PLC_Format_Binary_){
                 QByteArray wr((char*)read_cmd, sizeof(read_cmd));
-
                 write_result = m_socket->write(wr);
             }
-            bool bflush = m_socket->waitForBytesWritten();  //flush()
-            if(write_result != -1 && bflush){   //success
-                if(write_result == 0){
-                    //write a warning message here
-                }
-                // write an Infor message here
+            bool bflush = m_socket->waitForBytesWritten();
+            if(write_result == -1 || !bflush){
+                qWarning() << "[PLC] CMD_read_from_PLC: write failed.";
             }
+        } else {
+            qWarning() << "[PLC] CMD_read_from_PLC: Not connected or PLC not ready.";
         }
     }
-    catch (std::exception e){
-        // throw e
+    catch (const std::exception& e){
+        qCritical() << "[PLC] Exception in CMD_read_from_PLC:" << e.what();
+    } catch (...) {
+        qCritical() << "[PLC] Unknown exception in CMD_read_from_PLC.";
     }
 }
 

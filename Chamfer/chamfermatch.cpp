@@ -348,25 +348,13 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
     int num_rot = (int)((angle_max - angle_min) / angle_interval);
 
     // Clean and init.
-    if(trained_template.templates_gray.size() > 0){
-        trained_template.templates_gray.clear();
-    }
-    if(trained_template.templates.size() > 0){
-        trained_template.templates.clear();
-    }
-    if(trained_template.template_angle.size() > 0){
-        trained_template.template_angle.clear();
-    }
-    if(trained_template.template_scale.size() > 0){
-        trained_template.template_scale.clear();
-    }
-    if(trained_template.non_zero_area_templates.size() > 0){
-        trained_template.non_zero_area_templates.clear();
-    }
-    // Jang 20220330
-    if(trained_template.template_weights.size() > 0){
-        trained_template.template_weights.clear();
-    }
+    // Tối ưu: Dùng clear() không cần kiểm tra size > 0
+    trained_template.templates_gray.clear();
+    trained_template.templates.clear();
+    trained_template.template_angle.clear();
+    trained_template.template_scale.clear();
+    trained_template.non_zero_area_templates.clear();
+    trained_template.template_weights.clear();
 
     // Jang 20220503
     if(fs::exists(path)){
@@ -374,8 +362,10 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
     }
     fs::create_directories(path);
 
+    // Optimize: Only write files when debugging
     if(trained_template.num_non_zeros != nullptr){
         delete []trained_template.num_non_zeros;
+        trained_template.num_non_zeros = nullptr;
     }
     trained_template.num_non_zeros = new int[num_rot];
     trained_template.is_template_ok = false;
@@ -390,24 +380,19 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
     // Image Processing:
     // gray -> blur -> Affine -> binary -> morphologyEx -> Canny -> Skip Pixels
     for(int i = 0; i < num_rot; i++){
-
         cv::Mat temporary_img = temp_gray.clone();
-//        cv::blur(temporary_img, temporary_img, cv::Size(3, 3));
-
-        cv::Mat boundary_mask = cv::Mat::zeros(temp_gray.size(), CV_8U);
-        cv::add(boundary_mask, 255, boundary_mask);
-
+        cv::Mat boundary_mask = cv::Mat::ones(temp_gray.size(), CV_8U) * 255;
         cv::Point2f center_pt(temporary_img.cols/2, temporary_img.rows/2);
         cv::Mat rotation_mat = cv::getRotationMatrix2D(center_pt, angle_min + rot_angle * i, 1.0);
         cv::warpAffine(temporary_img, temporary_img, rotation_mat, temporary_img.size());
-
         trained_template.templates_gray.push_back(temporary_img.clone());
-        cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_gray.png", temporary_img );
-
+        // Optimize: Only write files when debugging
+        if(dm::match_img) {
+            cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_gray.png", temporary_img );
+        }
         std::vector<std::vector<cv::Point>> sorted_contours;
         if(!use_image_proc){
             cv::blur(temporary_img, temporary_img, cv::Size(3, 3));
-            //Canny edge
             cv::Canny(temporary_img, temp_contours, 100, 100, 3);
         }
         else{
@@ -443,8 +428,8 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
                 weight = weight_threshold * (1.0 / (float)(c + 1));
             }
         }
+        // Tối ưu: Chỉ ghi file khi debug
         if(dm::match_img){
-//        std::cout << "sorted_contours.size(): " << sorted_contours.size() << std::endl;
             cv::Mat contour_weight_copy_color = cv::Mat::zeros(temp_gray.size(), CV_8UC3);
             for(int c = 0; c < sorted_contours.size(); c ++ ){
                 std::vector<std::vector<cv::Point>> one_contour;
@@ -457,56 +442,54 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
                     green = 125;
                     red = 125;
                 }
-    //            std::cout << blue << "," << green << ","<< red << std::endl;
                 cv::drawContours(contour_weight_copy_color, one_contour, -1, cv::Scalar(blue, green, red), 1, cv::LINE_8);
             }
             cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_weight_draw.png", contour_weight_copy_color );
             cv::Mat contour_weight_copy;
             cv::threshold(contour_weight, contour_weight_copy, 0, 255, cv::THRESH_BINARY);
             cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_weight.png", contour_weight_copy );
-
         }
 
         if(temp_contours.empty()){
             trained_template.num_templates = 0;
-            delete []trained_template.num_non_zeros;
-            trained_template.num_non_zeros = NULL;
+            if(trained_template.num_non_zeros != nullptr){
+                delete []trained_template.num_non_zeros;
+                trained_template.num_non_zeros = nullptr;
+            }
+            // Note: No contour, return immediately
             return;
         }
 
         // Jang 20220330
-        if(template_mask_exists_){
+        // Optimize: check for valid mask, only process if mask exists
+        cv::Mat dilated_boundary_mask;
+        if(template_mask_exists_ && !template_mask_.empty()){
             if(boundary_mask.rows < template_mask_.rows && boundary_mask.cols < template_mask_.cols){
                 cv::pyrDown(template_mask_, pyr_template_mask_, boundary_mask.size());    // become 1/2 size
                 boundary_mask = pyr_template_mask_;
             }else{
                 boundary_mask = template_mask_.clone();
             }
+            if(dm::match_img){
+                cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_selected_mask.png", boundary_mask );
+            }
+            cv::warpAffine(boundary_mask, boundary_mask, rotation_mat, temporary_img.size());
+            cv::threshold(boundary_mask, boundary_mask, 254, 255, cv::THRESH_BINARY_INV);
+            //cv::Mat dilated_boundary_mask;
+            cv::morphologyEx(boundary_mask, dilated_boundary_mask, cv::MORPH_DILATE, cv::Mat::ones(cv::Size(3,3), CV_8UC1));
+            temp_contours = temp_contours - dilated_boundary_mask;
         }
-        if(dm::match_img){
-        //        std::cout << "template_mask_ size: " << template_mask_.size() << std::endl;
-        //        std::cout << "boundary_mask size: " << boundary_mask.size() << std::endl;
-            cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_selected_mask.png", boundary_mask );
-        }
-
-        cv::warpAffine(boundary_mask, boundary_mask, rotation_mat, temporary_img.size());
-        cv::threshold(boundary_mask, boundary_mask, 254, 255, cv::THRESH_BINARY_INV);
-        cv::Mat dilated_boundary_mask;
-        cv::morphologyEx(boundary_mask, dilated_boundary_mask, cv::MORPH_DILATE, cv::Mat::ones(cv::Size(3,3), CV_8UC1));
-        //Canny edge
-//        cv::Canny(temporary_img, temp_contours, 100, 100, 3);
-
-        temp_contours = temp_contours - dilated_boundary_mask;
 
         // # Speedup: skip pixels on template
+        // Optimize: skip pixels more efficiently, avoid repeating math
         if(skip > 0){
             int skip_count = 0;
-            int skip_distance = skip;
             for(int n = 0; n < temp_contours.rows; n ++){
+                uchar* row_ptr = temp_contours.ptr<uchar>(n);
                 for(int m = 0; m < temp_contours.cols; m++){
-                    if(temp_contours.at<uchar>(n, m) > 0){
-                        if(skip_count % skip_distance != 0){    // skip the matching in some pixels
-                            temp_contours.at<uchar>(n, m) = 0;
+                    if(row_ptr[m] > 0){
+                        if(skip_count % skip != 0){
+                            row_ptr[m] = 0;
                         }
                         skip_count++;
                     }
@@ -516,31 +499,36 @@ void CudaChamfer::createTempNonZeroMat(cv::Mat orig_temp, TrainTemplate& trained
 
 
         // Save the templates, and generate the non-zero mat (Chamfer images)
-        cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + ".png", temp_contours );
+        // Tối ưu: chỉ ghi file khi debug
         if(dm::match_img){
-            cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_dila_mask.png", dilated_boundary_mask );
-            cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_thres_mask.png", boundary_mask );
+            cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + ".png", temp_contours );
+            if(!dilated_boundary_mask.empty())
+                cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_dila_mask.png", dilated_boundary_mask );
+            if(!boundary_mask.empty())
+                cv::imwrite(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + "_thres_mask.png", boundary_mask );
         }
 
         cv::findNonZero(temp_contours, non_zeros_mat);
-        int len_non_zeros_mat = non_zeros_mat.size().height * non_zeros_mat.size().width;   // the total pixels in non_zeros_mat
+        int len_non_zeros_mat = non_zeros_mat.total(); // Optimize: use total() instead of multiplying size
         trained_template.num_non_zeros[i] = len_non_zeros_mat;
         tot_mem_space += len_non_zeros_mat;
 
-        cv::FileStorage fs;
-        try {
-            if (fs.open(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + ".data", cv::FileStorage::WRITE)) {
-                fs << "non_zeros_mat" << non_zeros_mat;
+        // Tối ưu: chỉ ghi file khi debug
+        if(dm::match_img){
+            cv::FileStorage fs;
+            try {
+                if (fs.open(path + "/rot_" + std::to_string(angle_min + rot_angle * i) + ".data", cv::FileStorage::WRITE)) {
+                    fs << "non_zeros_mat" << non_zeros_mat;
+                }
+                else {
+                    lw << "The file couldn't be opened: " << path << ", line " << __LINE__ << lw.endl;
+                }
             }
-            else {
-                lw << "The file couldn't be opened: " << path << ", line " << __LINE__ << lw.endl;
+            catch (cv::Exception e) {
+                lw << "FileStorage error: " << e.what() << lw.endl;
             }
-
+            fs.release();
         }
-        catch (cv::Exception e) {
-            lw << "FileStorage error: " << e.what() << lw.endl;
-        }
-        fs.release();
 
         trained_template.templates.push_back(temp_contours.clone());
         trained_template.template_angle.push_back(angle_min + rot_angle * i);
